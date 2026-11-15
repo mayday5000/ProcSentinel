@@ -4,6 +4,8 @@ A Windows kernel-mode (WDM) process activity monitor paired with a C++23 user-mo
 
 The driver tracks real-time process creation and termination via kernel callbacks, stores telemetry in a spinlock-protected non-paged ring buffer, and exposes a control device (`\\.\ProcMonDrv`) over `METHOD_BUFFERED` IOCTLs. The user-mode console client queries live process snapshots, drains telemetry events to TSV logs, and performs bounded process image memory reads.
 
+**Author:** Damian Andres Ulanowicz
+
 ## Features
 
 - **Kernel-mode WDM, not user-mode polling.** Process create and exit are delivered by `PsSetCreateProcessNotifyRoutineEx`. The client does not poll ETW or `CreateToolhelp32Snapshot` for lifecycle events.
@@ -558,5 +560,7 @@ Expected result: `ALL TESTS PASSED`.
 ---
 
 ## License and scope
+
+This project is licensed under the [MIT License](LICENSE). Copyright (c) 2026 Damian Andres Ulanowicz.
 
 This is a lab driver for process telemetry and bounded image dumps. It is not a production security product. Load it only on a test machine with test signing enabled.
