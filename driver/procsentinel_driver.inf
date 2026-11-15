@@ -1,0 +1,50 @@
+;
+; procsentinel_driver.inf
+; Installation information for ProcSentinel_v2 (WDM control device)
+;
+
+[Version]
+Signature="$WINDOWS NT$"
+Class=System
+ClassGuid={4d36e97d-e325-11ce-bfc1-08002be10318}
+Provider=%ManufacturerName%
+DriverVer=08/04/2026,2.0.0.0
+CatalogFile=procsentinel_driver.cat
+PnpLockdown=1
+
+[DestinationDirs]
+DefaultDestDir = 13
+
+[SourceDisksNames]
+1 = %DiskName%,,,""
+
+[SourceDisksFiles]
+procsentinel_driver.sys = 1,,
+
+[Manufacturer]
+%ManufacturerName%=Standard,NT$ARCH$
+
+[Standard.NT$ARCH$]
+%ProcSentinel.DeviceDesc%=ProcSentinel_Device, Root\ProcSentinelDrv
+
+[ProcSentinel_Device.NT]
+CopyFiles=Drivers_Dir
+
+[Drivers_Dir]
+procsentinel_driver.sys
+
+[ProcSentinel_Device.NT.Services]
+AddService = ProcSentinelDrv,0x00000002,ProcSentinel_Service_Inst
+
+[ProcSentinel_Service_Inst]
+DisplayName    = %ProcSentinel.SVCDESC%
+ServiceType    = 1               ; SERVICE_KERNEL_DRIVER
+StartType      = 3               ; SERVICE_DEMAND_START
+ErrorControl   = 1               ; SERVICE_ERROR_NORMAL
+ServiceBinary  = %13%\procsentinel_driver.sys
+
+[Strings]
+ManufacturerName="ProcSentinel Project"
+DiskName="ProcSentinel_v2 Source Disk"
+ProcSentinel.DeviceDesc="Process Activity Monitor Driver"
+ProcSentinel.SVCDESC="Process Activity Monitor Service"

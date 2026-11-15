@@ -17,7 +17,7 @@
     <MinimumVisualStudioVersion>12.0</MinimumVisualStudioVersion>
     <Configuration>Debug</Configuration>
     <Platform Condition="'$(Platform)' == ''">x64</Platform>
-    <RootNamespace>procmon_driver</RootNamespace>
+    <RootNamespace>procsentinel_driver</RootNamespace>
     <DriverType>WDM</DriverType>
     <WindowsTargetPlatformVersion>$(LatestTargetPlatformVersion)</WindowsTargetPlatformVersion>
   </PropertyGroup>
@@ -50,7 +50,7 @@
     <DebuggerFlavor>DbgengKernelDebugger</DebuggerFlavor>
     <OutDir>$(ProjectDir)x64\$(Configuration)\</OutDir>
     <IntDir>$(ProjectDir)x64\$(Configuration)\</IntDir>
-    <TargetName>procmon_driver</TargetName>
+    <TargetName>procsentinel_driver</TargetName>
     <EnableInf2cat>false</EnableInf2cat>
     <SignMode>TestSign</SignMode>
   </PropertyGroup>
@@ -58,7 +58,7 @@
     <DebuggerFlavor>DbgengKernelDebugger</DebuggerFlavor>
     <OutDir>$(ProjectDir)x64\$(Configuration)\</OutDir>
     <IntDir>$(ProjectDir)x64\$(Configuration)\</IntDir>
-    <TargetName>procmon_driver</TargetName>
+    <TargetName>procsentinel_driver</TargetName>
     <EnableInf2cat>false</EnableInf2cat>
     <SignMode>TestSign</SignMode>
   </PropertyGroup>
@@ -91,10 +91,10 @@
     </DriverSign>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="procmon_driver.c" />
+    <ClCompile Include="procsentinel_driver.c" />
   </ItemGroup>
   <ItemGroup>
-    <Inf Include="procmon_driver.inf" />
+    <Inf Include="procsentinel_driver.inf" />
   </ItemGroup>
   <ItemGroup>
     <None Include="debug.wds" />

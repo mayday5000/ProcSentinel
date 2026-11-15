@@ -1,10 +1,10 @@
 /*
- * procmon_driver.c
+ * procsentinel_driver.c
  * Process Activity Monitoring Kernel Driver (WDM + Process Notify Callbacks)
  *
  * Purpose: Monitor process creation and termination in real time, maintain a
  *          ring-buffer event log and statistics, expose a control device
- *          (\\.\ProcMonDrv) so a user-mode application can:
+ *          (\\.\ProcSentinelDrv) so a user-mode application can:
  *            - query live process list (PID, parent, name, protected flag, state)
  *            - retrieve telemetry events (create / exit)
  *            - request a memory image dump of a process by name
@@ -43,30 +43,30 @@
 
 // ===================== DEVICE / IOCTL DEFINITIONS =====================
 
-#define DEVICE_NAME     L"\\Device\\ProcMonDrv"
-#define SYMLINK_NAME    L"\\DosDevices\\ProcMonDrv"
+#define DEVICE_NAME     L"\\Device\\ProcSentinelDrv"
+#define SYMLINK_NAME    L"\\DosDevices\\ProcSentinelDrv"
 
-#define IOCTL_PROCMON_GET_STATS         CTL_CODE(FILE_DEVICE_UNKNOWN, 0xB00, METHOD_BUFFERED, FILE_ANY_ACCESS)
-#define IOCTL_PROCMON_GET_EVENTS        CTL_CODE(FILE_DEVICE_UNKNOWN, 0xB01, METHOD_BUFFERED, FILE_ANY_ACCESS)
-#define IOCTL_PROCMON_START_MONITOR     CTL_CODE(FILE_DEVICE_UNKNOWN, 0xB02, METHOD_BUFFERED, FILE_ANY_ACCESS)
-#define IOCTL_PROCMON_STOP_MONITOR      CTL_CODE(FILE_DEVICE_UNKNOWN, 0xB03, METHOD_BUFFERED, FILE_ANY_ACCESS)
-#define IOCTL_PROCMON_RESET_STATS       CTL_CODE(FILE_DEVICE_UNKNOWN, 0xB04, METHOD_BUFFERED, FILE_ANY_ACCESS)
-#define IOCTL_PROCMON_GET_PROCESS_LIST  CTL_CODE(FILE_DEVICE_UNKNOWN, 0xB05, METHOD_BUFFERED, FILE_ANY_ACCESS)
-#define IOCTL_PROCMON_DUMP_PROCESS      CTL_CODE(FILE_DEVICE_UNKNOWN, 0xB06, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_PROCSENTINEL_GET_STATS         CTL_CODE(FILE_DEVICE_UNKNOWN, 0xB00, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_PROCSENTINEL_GET_EVENTS        CTL_CODE(FILE_DEVICE_UNKNOWN, 0xB01, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_PROCSENTINEL_START_MONITOR     CTL_CODE(FILE_DEVICE_UNKNOWN, 0xB02, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_PROCSENTINEL_STOP_MONITOR      CTL_CODE(FILE_DEVICE_UNKNOWN, 0xB03, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_PROCSENTINEL_RESET_STATS       CTL_CODE(FILE_DEVICE_UNKNOWN, 0xB04, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_PROCSENTINEL_GET_PROCESS_LIST  CTL_CODE(FILE_DEVICE_UNKNOWN, 0xB05, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_PROCSENTINEL_DUMP_PROCESS      CTL_CODE(FILE_DEVICE_UNKNOWN, 0xB06, METHOD_BUFFERED, FILE_ANY_ACCESS)
 
 // ===================== SHARED PROTOCOL (single source of truth) =====================
 // Path: ../shared/shared_protocol.h
 //   WireEvent / WireStats / WireProcInfo
-//   aliases: PROCMON_EVENT, PROCMON_STATS, PROCMON_PROC_INFO
-//   constants: PROCMON_MAX_*, PROCMON_EVENT_*, PROCMON_STATE_*
+//   aliases: PROCSENTINEL_EVENT, PROCSENTINEL_STATS, PROCSENTINEL_PROC_INFO
+//   constants: PROCSENTINEL_MAX_*, PROCSENTINEL_EVENT_*, PROCSENTINEL_STATE_*
 // Same header is included by usermode/types.h and mock_tests.
 #include "../shared/shared_protocol.h"
 
 /* Kernel timestamps are LARGE_INTEGER; wire field is int64_t (same size). */
 C_ASSERT(sizeof(((WireEvent*)0)->Timestamp) == sizeof(LARGE_INTEGER));
-C_ASSERT(sizeof(PROCMON_EVENT) == sizeof(WireEvent));
-C_ASSERT(sizeof(PROCMON_STATS) == sizeof(WireStats));
-C_ASSERT(sizeof(PROCMON_PROC_INFO) == sizeof(WireProcInfo));
+C_ASSERT(sizeof(PROCSENTINEL_EVENT) == sizeof(WireEvent));
+C_ASSERT(sizeof(PROCSENTINEL_STATS) == sizeof(WireStats));
+C_ASSERT(sizeof(PROCSENTINEL_PROC_INFO) == sizeof(WireProcInfo));
 
 // ===================== REQUIRED SYSTEM DEFINITIONS =====================
 
@@ -172,42 +172,42 @@ MmCopyVirtualMemory(
 
 // ===================== RING BUFFER TYPE (must appear before globals) =====================
 
-typedef struct _PROCMON_EVENT_RING {
-    PROCMON_EVENT entries[PROCMON_MAX_EVENTS];
+typedef struct _PROCSENTINEL_EVENT_RING {
+    PROCSENTINEL_EVENT entries[PROCSENTINEL_MAX_EVENTS];
     volatile ULONG head;
     volatile ULONG tail;
     volatile ULONG count;
     volatile ULONG dropped;
-} PROCMON_EVENT_RING, *PPROCMON_EVENT_RING;
+} PROCSENTINEL_EVENT_RING, *PPROCSENTINEL_EVENT_RING;
 
 // ===================== GLOBAL STATE =====================
 
 static PDEVICE_OBJECT   g_DeviceObject = NULL;
 static BOOLEAN          g_MonitoringEnabled = FALSE;
 static KSPIN_LOCK       g_RingLock;
-static PROCMON_EVENT_RING g_EventRing;
-static PROCMON_STATS    g_Stats;
+static PROCSENTINEL_EVENT_RING g_EventRing;
+static PROCSENTINEL_STATS    g_Stats;
 static BOOLEAN          g_NotifyRegistered = FALSE;
 
 // ===================== RING HELPERS (kernel version with spinlock) =====================
 
-static VOID EventRingInitKernel(PPROCMON_EVENT_RING r)
+static VOID EventRingInitKernel(PPROCSENTINEL_EVENT_RING r)
 {
     RtlZeroMemory(r, sizeof(*r));
 }
 
-static VOID EventRingPushKernel(PPROCMON_EVENT_RING r, const PROCMON_EVENT* ev)
+static VOID EventRingPushKernel(PPROCSENTINEL_EVENT_RING r, const PROCSENTINEL_EVENT* ev)
 {
     KIRQL oldIrql;
     KeAcquireSpinLock(&g_RingLock, &oldIrql);
-    if (r->count >= PROCMON_MAX_EVENTS) {
-        r->tail = (r->tail + 1) % PROCMON_MAX_EVENTS;
+    if (r->count >= PROCSENTINEL_MAX_EVENTS) {
+        r->tail = (r->tail + 1) % PROCSENTINEL_MAX_EVENTS;
         r->count--;
         r->dropped++;
         g_Stats.DroppedEvents = r->dropped;
     }
     r->entries[r->head] = *ev;
-    r->head = (r->head + 1) % PROCMON_MAX_EVENTS;
+    r->head = (r->head + 1) % PROCSENTINEL_MAX_EVENTS;
     r->count++;
     g_Stats.EventCount = r->count;
     KeReleaseSpinLock(&g_RingLock, oldIrql);
@@ -235,7 +235,7 @@ ProcessNotifyCallback(
     if (!g_MonitoringEnabled)
         return;
 
-    PROCMON_EVENT ev;
+    PROCSENTINEL_EVENT ev;
     LARGE_INTEGER ts;
     RtlZeroMemory(&ev, sizeof(ev));
     KeQuerySystemTime(&ts);
@@ -244,16 +244,16 @@ ProcessNotifyCallback(
 
     if (CreateInfo != NULL) {
         // ----- CREATE -----
-        ev.EventType = PROCMON_EVENT_CREATE;
-        ev.State = PROCMON_STATE_RUNNING;
+        ev.EventType = PROCSENTINEL_EVENT_CREATE;
+        ev.State = PROCSENTINEL_STATE_RUNNING;
         ev.ParentProcessId = HandleToULong(CreateInfo->ParentProcessId);
 
         // Short name from EPROCESS (always present, max 15 chars + null)
         // PsGetProcessImageFileName returns PCHAR
         PCHAR shortName = PsGetProcessImageFileName(Process);
         if (shortName) {
-            RtlCopyMemory(ev.ImageName, shortName, PROCMON_MAX_NAME - 1);
-            ev.ImageName[PROCMON_MAX_NAME - 1] = 0;
+            RtlCopyMemory(ev.ImageName, shortName, PROCSENTINEL_MAX_NAME - 1);
+            ev.ImageName[PROCSENTINEL_MAX_NAME - 1] = 0;
         }
 
         // Full path if available (FileOpenNameAvailable)
@@ -261,7 +261,7 @@ ProcessNotifyCallback(
             // Convert UNICODE_STRING to ANSI carefully (truncate)
             ANSI_STRING ansi = { 0 };
             if (NT_SUCCESS(RtlUnicodeStringToAnsiString(&ansi, CreateInfo->ImageFileName, TRUE))) {
-                ULONG copyLen = min(ansi.Length, PROCMON_MAX_PATH - 1);
+                ULONG copyLen = min(ansi.Length, PROCSENTINEL_MAX_PATH - 1);
                 RtlCopyMemory(ev.ImagePath, ansi.Buffer, copyLen);
                 ev.ImagePath[copyLen] = 0;
                 RtlFreeAnsiString(&ansi);
@@ -273,13 +273,13 @@ ProcessNotifyCallback(
     }
     else {
         // ----- EXIT -----
-        ev.EventType = PROCMON_EVENT_EXIT;
-        ev.State = PROCMON_STATE_EXITING;
+        ev.EventType = PROCSENTINEL_EVENT_EXIT;
+        ev.State = PROCSENTINEL_STATE_EXITING;
         // Parent unknown on exit; leave 0
         PCHAR shortName = PsGetProcessImageFileName(Process);
         if (shortName) {
-            RtlCopyMemory(ev.ImageName, shortName, PROCMON_MAX_NAME - 1);
-            ev.ImageName[PROCMON_MAX_NAME - 1] = 0;
+            RtlCopyMemory(ev.ImageName, shortName, PROCSENTINEL_MAX_NAME - 1);
+            ev.ImageName[PROCSENTINEL_MAX_NAME - 1] = 0;
         }
         InterlockedIncrement64((PLONG64)&g_Stats.Exits);
         InterlockedDecrement((PLONG)&g_Stats.CurrentProcessCount);
@@ -290,7 +290,7 @@ ProcessNotifyCallback(
 
 // ===================== PROCESS LIST (snapshot via ZwQuerySystemInformation) =====================
 
-static ULONG EnumerateProcesses(PPROCMON_PROC_INFO out, ULONG maxCount)
+static ULONG EnumerateProcesses(PPROCSENTINEL_PROC_INFO out, ULONG maxCount)
 {
     ULONG count = 0;
     ULONG bufferSize = 0;
@@ -319,14 +319,14 @@ static ULONG EnumerateProcesses(PPROCMON_PROC_INFO out, ULONG maxCount)
                 out[count].Pid = (ULONG_PTR)current->UniqueProcessId;
                 out[count].ParentPid = (ULONG_PTR)current->InheritedFromUniqueProcessId;
                 out[count].Protected = (BOOLEAN)(PsIsProtectedProcess(proc) || PsIsProtectedProcessLight(proc));
-                out[count].State = PROCMON_STATE_RUNNING; // snapshot = live processes
+                out[count].State = PROCSENTINEL_STATE_RUNNING; // snapshot = live processes
                 out[count].Reserved = 0;
 
                 // Short name
                 PCHAR shortName = PsGetProcessImageFileName(proc);
                 if (shortName) {
-                    RtlCopyMemory(out[count].ImageName, shortName, PROCMON_MAX_NAME - 1);
-                    out[count].ImageName[PROCMON_MAX_NAME - 1] = 0;
+                    RtlCopyMemory(out[count].ImageName, shortName, PROCSENTINEL_MAX_NAME - 1);
+                    out[count].ImageName[PROCSENTINEL_MAX_NAME - 1] = 0;
                 }
                 else {
                     out[count].ImageName[0] = 0;
@@ -337,7 +337,7 @@ static ULONG EnumerateProcesses(PPROCMON_PROC_INFO out, ULONG maxCount)
                 if (current->ImageName.Buffer && current->ImageName.Length > 0) {
                     ANSI_STRING ansi = { 0 };
                     if (NT_SUCCESS(RtlUnicodeStringToAnsiString(&ansi, &current->ImageName, TRUE))) {
-                        ULONG copyLen = min(ansi.Length, PROCMON_MAX_PATH - 1);
+                        ULONG copyLen = min(ansi.Length, PROCSENTINEL_MAX_PATH - 1);
                         RtlCopyMemory(out[count].ImagePath, ansi.Buffer, copyLen);
                         out[count].ImagePath[copyLen] = 0;
                         RtlFreeAnsiString(&ansi);
@@ -361,7 +361,7 @@ static ULONG EnumerateProcesses(PPROCMON_PROC_INFO out, ULONG maxCount)
 // ===================== PROCESS MEMORY DUMP (by name) =====================
 /*
  *   1. User-mode sends the process short name (e.g. "notepad.exe") in the
- *      input buffer of IOCTL_PROCMON_DUMP_PROCESS.
+ *      input buffer of IOCTL_PROCSENTINEL_DUMP_PROCESS.
  *   2. We walk the live process list looking for a matching ImageName.
  *   3. Once found we obtain the PEPROCESS, read its SectionBaseAddress
  *      (ImageBase) and SizeOfImage from the PE header (or use a conservative
@@ -372,7 +372,7 @@ static ULONG EnumerateProcesses(PPROCMON_PROC_INFO out, ULONG maxCount)
  *   5. Return the number of bytes copied.
  *
  * Safety:
- *   - Cap at PROCMON_DUMP_MAX_SIZE (4 MB).
+ *   - Cap at PROCSENTINEL_DUMP_MAX_SIZE (4 MB).
  *   - Fail cleanly if process exits under us (STATUS_PROCESS_IS_TERMINATING).
  *   - Never probe user buffers ourselves; METHOD_BUFFERED already did it.
  */
@@ -474,8 +474,8 @@ static NTSTATUS DumpProcessByName(PCHAR name, PVOID outBuffer, ULONG outSize, PU
     }
 
     ULONG imageSize = nt->OptionalHeader.SizeOfImage;
-    if (imageSize == 0 || imageSize > PROCMON_DUMP_MAX_SIZE)
-        imageSize = min(outSize, PROCMON_DUMP_MAX_SIZE);
+    if (imageSize == 0 || imageSize > PROCSENTINEL_DUMP_MAX_SIZE)
+        imageSize = min(outSize, PROCSENTINEL_DUMP_MAX_SIZE);
 
     if (outSize < imageSize) {
         ObDereferenceObject(targetProcess);
@@ -535,8 +535,8 @@ NTSTATUS DispatchDeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     ULONG_PTR info = 0;
 
     switch (code) {
-    case IOCTL_PROCMON_GET_STATS:
-        if (outLen < sizeof(PROCMON_STATS)) {
+    case IOCTL_PROCSENTINEL_GET_STATS:
+        if (outLen < sizeof(PROCSENTINEL_STATS)) {
             status = STATUS_BUFFER_TOO_SMALL;
             break;
         }
@@ -544,50 +544,50 @@ NTSTATUS DispatchDeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp)
         {
             KIRQL old;
             KeAcquireSpinLock(&g_RingLock, &old);
-            RtlCopyMemory(buffer, &g_Stats, sizeof(PROCMON_STATS));
-            ((PPROCMON_STATS)buffer)->EventCount = g_EventRing.count;
-            ((PPROCMON_STATS)buffer)->DroppedEvents = g_EventRing.dropped;
+            RtlCopyMemory(buffer, &g_Stats, sizeof(PROCSENTINEL_STATS));
+            ((PPROCSENTINEL_STATS)buffer)->EventCount = g_EventRing.count;
+            ((PPROCSENTINEL_STATS)buffer)->DroppedEvents = g_EventRing.dropped;
             KeReleaseSpinLock(&g_RingLock, old);
         }
-        info = sizeof(PROCMON_STATS);
+        info = sizeof(PROCSENTINEL_STATS);
         status = STATUS_SUCCESS;
         break;
 
-    case IOCTL_PROCMON_GET_EVENTS:
-        if (outLen < sizeof(PROCMON_EVENT)) {
+    case IOCTL_PROCSENTINEL_GET_EVENTS:
+        if (outLen < sizeof(PROCSENTINEL_EVENT)) {
             status = STATUS_BUFFER_TOO_SMALL;
             break;
         }
         {
-            ULONG maxEvents = outLen / sizeof(PROCMON_EVENT);
-            PPROCMON_EVENT out = (PPROCMON_EVENT)buffer;
+            ULONG maxEvents = outLen / sizeof(PROCSENTINEL_EVENT);
+            PPROCSENTINEL_EVENT out = (PPROCSENTINEL_EVENT)buffer;
             ULONG copied = 0;
             KIRQL old;
             KeAcquireSpinLock(&g_RingLock, &old);
             while (copied < maxEvents && g_EventRing.count > 0) {
                 out[copied] = g_EventRing.entries[g_EventRing.tail];
-                g_EventRing.tail = (g_EventRing.tail + 1) % PROCMON_MAX_EVENTS;
+                g_EventRing.tail = (g_EventRing.tail + 1) % PROCSENTINEL_MAX_EVENTS;
                 g_EventRing.count--;
                 copied++;
             }
             g_Stats.EventCount = g_EventRing.count;
             KeReleaseSpinLock(&g_RingLock, old);
-            info = copied * sizeof(PROCMON_EVENT);
+            info = copied * sizeof(PROCSENTINEL_EVENT);
             status = STATUS_SUCCESS;
         }
         break;
 
-    case IOCTL_PROCMON_START_MONITOR:
+    case IOCTL_PROCSENTINEL_START_MONITOR:
         g_MonitoringEnabled = TRUE;
         status = STATUS_SUCCESS;
         break;
 
-    case IOCTL_PROCMON_STOP_MONITOR:
+    case IOCTL_PROCSENTINEL_STOP_MONITOR:
         g_MonitoringEnabled = FALSE;
         status = STATUS_SUCCESS;
         break;
 
-    case IOCTL_PROCMON_RESET_STATS:
+    case IOCTL_PROCSENTINEL_RESET_STATS:
         {
             KIRQL old;
             KeAcquireSpinLock(&g_RingLock, &old);
@@ -598,20 +598,20 @@ NTSTATUS DispatchDeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp)
         status = STATUS_SUCCESS;
         break;
 
-    case IOCTL_PROCMON_GET_PROCESS_LIST:
-        if (outLen < sizeof(PROCMON_PROC_INFO)) {
+    case IOCTL_PROCSENTINEL_GET_PROCESS_LIST:
+        if (outLen < sizeof(PROCSENTINEL_PROC_INFO)) {
             status = STATUS_BUFFER_TOO_SMALL;
             break;
         }
         {
-            ULONG maxCount = outLen / sizeof(PROCMON_PROC_INFO);
-            ULONG count = EnumerateProcesses((PPROCMON_PROC_INFO)buffer, maxCount);
-            info = count * sizeof(PROCMON_PROC_INFO);
+            ULONG maxCount = outLen / sizeof(PROCSENTINEL_PROC_INFO);
+            ULONG count = EnumerateProcesses((PPROCSENTINEL_PROC_INFO)buffer, maxCount);
+            info = count * sizeof(PROCSENTINEL_PROC_INFO);
             status = STATUS_SUCCESS;
         }
         break;
 
-    case IOCTL_PROCMON_DUMP_PROCESS:
+    case IOCTL_PROCSENTINEL_DUMP_PROCESS:
         if (inLen == 0 || !buffer) {
             status = STATUS_INVALID_PARAMETER;
             break;
@@ -619,8 +619,8 @@ NTSTATUS DispatchDeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp)
         // Input is the null-terminated process name (ANSI)
         // Output buffer is the memory image
         {
-            CHAR name[PROCMON_MAX_NAME] = { 0 };
-            ULONG copy = min(inLen, PROCMON_MAX_NAME - 1);
+            CHAR name[PROCSENTINEL_MAX_NAME] = { 0 };
+            ULONG copy = min(inLen, PROCSENTINEL_MAX_NAME - 1);
             RtlCopyMemory(name, buffer, copy);
             name[copy] = 0;
 
@@ -707,12 +707,12 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
     if (!NT_SUCCESS(status)) {
         // Still allow the driver to load; monitoring just won't work
         // (user can see the error via Event Viewer)
-        DbgPrint("ProcMon: PsSetCreateProcessNotifyRoutineEx failed 0x%08X\n", status);
+        DbgPrint("ProcSentinel: PsSetCreateProcessNotifyRoutineEx failed 0x%08X\n", status);
     }
     else {
         g_NotifyRegistered = TRUE;
     }
 
-    DbgPrint("ProcMon: Driver loaded successfully. Device \\Device\\ProcMonDrv ready.\n");
+    DbgPrint("ProcSentinel: Driver loaded successfully. Device \\Device\\ProcSentinelDrv ready.\n");
     return STATUS_SUCCESS;
 }

@@ -1,7 +1,7 @@
 /*
  * shared_protocol.h
  * ---------------------------------------------------------------------------
- * Single source of truth for the ProcMon wire protocol (kernel <-> user-mode).
+ * Single source of truth for the ProcSentinel wire protocol (kernel <-> user-mode).
  *
  * Include from:
  *   - Kernel WDM driver (C)
@@ -23,22 +23,22 @@ extern "C" {
 #include <stddef.h>
 
 /* Keep in sync across driver / usermode / tests. */
-#define PROCMON_MAX_EVENTS       2048
-#define PROCMON_MAX_NAME         16
-#define PROCMON_MAX_PATH         260
-#define PROCMON_MAX_PROCESS_LIST 1024
-#define PROCMON_DUMP_MAX_SIZE    (4 * 1024 * 1024)
+#define PROCSENTINEL_MAX_EVENTS       2048
+#define PROCSENTINEL_MAX_NAME         16
+#define PROCSENTINEL_MAX_PATH         260
+#define PROCSENTINEL_MAX_PROCESS_LIST 1024
+#define PROCSENTINEL_DUMP_MAX_SIZE    (4 * 1024 * 1024)
 
 /* Event types */
-#define PROCMON_EVENT_CREATE     1
-#define PROCMON_EVENT_EXIT       2
-#define PROCMON_EVENT_STATE      3
+#define PROCSENTINEL_EVENT_CREATE     1
+#define PROCSENTINEL_EVENT_EXIT       2
+#define PROCSENTINEL_EVENT_STATE      3
 
 /* Process state */
-#define PROCMON_STATE_RUNNING    0
-#define PROCMON_STATE_EXITING    1
-#define PROCMON_STATE_ZOMBIE     2
-#define PROCMON_STATE_SUSPENDED  3
+#define PROCSENTINEL_STATE_RUNNING    0
+#define PROCSENTINEL_STATE_EXITING    1
+#define PROCSENTINEL_STATE_ZOMBIE     2
+#define PROCSENTINEL_STATE_SUSPENDED  3
 
 /*
  * WireEvent / WireStats / WireProcInfo are packed 1-byte aligned.
@@ -50,11 +50,11 @@ typedef struct _WireEvent {
     int64_t  Timestamp;
     uint32_t ProcessId;
     uint32_t ParentProcessId;
-    uint8_t  EventType;          /* PROCMON_EVENT_* */
-    uint8_t  State;              /* PROCMON_STATE_* */
+    uint8_t  EventType;          /* PROCSENTINEL_EVENT_* */
+    uint8_t  State;              /* PROCSENTINEL_STATE_* */
     uint16_t Reserved;
-    char     ImageName[PROCMON_MAX_NAME];
-    char     ImagePath[PROCMON_MAX_PATH];
+    char     ImageName[PROCSENTINEL_MAX_NAME];
+    char     ImagePath[PROCSENTINEL_MAX_PATH];
 } WireEvent;
 
 typedef struct _WireProcInfo {
@@ -63,8 +63,8 @@ typedef struct _WireProcInfo {
     uint8_t  Protected;
     uint8_t  State;
     uint16_t Reserved;
-    char     ImageName[PROCMON_MAX_NAME];
-    char     ImagePath[PROCMON_MAX_PATH];
+    char     ImageName[PROCSENTINEL_MAX_NAME];
+    char     ImagePath[PROCSENTINEL_MAX_PATH];
 } WireProcInfo;
 
 typedef struct _WireStats {
@@ -81,12 +81,12 @@ typedef struct _WireStats {
 #pragma pack(pop)
 
 /* Kernel / C historical aliases */
-typedef WireEvent    PROCMON_EVENT;
-typedef WireEvent*   PPROCMON_EVENT;
-typedef WireProcInfo PROCMON_PROC_INFO;
-typedef WireProcInfo* PPROCMON_PROC_INFO;
-typedef WireStats    PROCMON_STATS;
-typedef WireStats*   PPROCMON_STATS;
+typedef WireEvent    PROCSENTINEL_EVENT;
+typedef WireEvent*   PPROCSENTINEL_EVENT;
+typedef WireProcInfo PROCSENTINEL_PROC_INFO;
+typedef WireProcInfo* PPROCSENTINEL_PROC_INFO;
+typedef WireStats    PROCSENTINEL_STATS;
+typedef WireStats*   PPROCSENTINEL_STATS;
 
 /*
  * Simple ring metadata for *user-mode / host tests*.
@@ -94,7 +94,7 @@ typedef WireStats*   PPROCMON_STATS;
  * (IRQL-safe). Do not replace the kernel path with std::atomic.
  */
 typedef struct _WireEventRing {
-    WireEvent         entries[PROCMON_MAX_EVENTS];
+    WireEvent         entries[PROCSENTINEL_MAX_EVENTS];
     volatile uint32_t head;
     volatile uint32_t tail;
     volatile uint32_t count;
@@ -110,7 +110,7 @@ static inline void EventRingInit(WireEventRing* ring)
 
 static inline int EventRingIsFull(const WireEventRing* ring)
 {
-    return ring->count >= PROCMON_MAX_EVENTS;
+    return ring->count >= PROCSENTINEL_MAX_EVENTS;
 }
 
 static inline int EventRingIsEmpty(const WireEventRing* ring)
@@ -121,13 +121,13 @@ static inline int EventRingIsEmpty(const WireEventRing* ring)
 /* Push: if full, drop oldest (same policy as kernel EventRingPushKernel) */
 static inline void EventRingPush(WireEventRing* ring, const WireEvent* ev)
 {
-    if (ring->count >= PROCMON_MAX_EVENTS) {
-        ring->tail = (ring->tail + 1) % PROCMON_MAX_EVENTS;
+    if (ring->count >= PROCSENTINEL_MAX_EVENTS) {
+        ring->tail = (ring->tail + 1) % PROCSENTINEL_MAX_EVENTS;
         ring->count--;
         ring->dropped++;
     }
     ring->entries[ring->head] = *ev;
-    ring->head = (ring->head + 1) % PROCMON_MAX_EVENTS;
+    ring->head = (ring->head + 1) % PROCSENTINEL_MAX_EVENTS;
     ring->count++;
 }
 
@@ -137,7 +137,7 @@ static inline int EventRingPop(WireEventRing* ring, WireEvent* out)
     if (ring->count == 0)
         return 0;
     *out = ring->entries[ring->tail];
-    ring->tail = (ring->tail + 1) % PROCMON_MAX_EVENTS;
+    ring->tail = (ring->tail + 1) % PROCSENTINEL_MAX_EVENTS;
     ring->count--;
     return 1;
 }

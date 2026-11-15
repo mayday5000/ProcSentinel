@@ -1,6 +1,6 @@
 /*
  * main_test_runner.cpp — single unified test entry (one main only)
- * ProcessMonitor
+ * ProcSentinel
  *
  * Covers:
  *   1. Low-level C ring helpers from shared_protocol.h
@@ -9,7 +9,7 @@
  *
  * Build:
  *   cmake -S .. -B ../build && cmake --build ../build
- *   cl /std:c++23 /EHsc /I..\shared /I..\usermode main_test_runner.cpp /Fe:procmon_unified_tests.exe
+ *   cl /std:c++23 /EHsc /I..\shared /I..\usermode main_test_runner.cpp /Fe:procsentinel_unified_tests.exe
  */
 
 #include <algorithm>
@@ -27,11 +27,11 @@
 #include "../shared/shared_protocol.h"
 #include "../usermode/types.h"
 
-using procmon::Event;
-using procmon::EventType;
-using procmon::ProcInfo;
-using procmon::ProcessState;
-using procmon::Stats;
+using procsentinel::Event;
+using procsentinel::EventType;
+using procsentinel::ProcInfo;
+using procsentinel::ProcessState;
+using procsentinel::Stats;
 
 // =============================================================================
 // IDriverClient + Mock
@@ -154,9 +154,9 @@ void run_ring_tests()
 
     WireEvent ev{};
     ev.ProcessId = 99;
-    ev.EventType = PROCMON_EVENT_CREATE;
-    ev.State = PROCMON_STATE_RUNNING;
-    std::strncpy(ev.ImageName, "test.exe", PROCMON_MAX_NAME - 1);
+    ev.EventType = PROCSENTINEL_EVENT_CREATE;
+    ev.State = PROCSENTINEL_STATE_RUNNING;
+    std::strncpy(ev.ImageName, "test.exe", PROCSENTINEL_MAX_NAME - 1);
 
     EventRingPush(&ring, &ev);
     CHECK(EventRingCount(&ring) == 1);
@@ -165,18 +165,18 @@ void run_ring_tests()
     WireEvent out{};
     CHECK(EventRingPop(&ring, &out) == 1);
     CHECK(out.ProcessId == 99);
-    CHECK(out.EventType == PROCMON_EVENT_CREATE);
+    CHECK(out.EventType == PROCSENTINEL_EVENT_CREATE);
     CHECK(std::strcmp(out.ImageName, "test.exe") == 0);
     CHECK(EventRingIsEmpty(&ring));
 
     // Drop-oldest overflow
     EventRingInit(&ring);
-    for (unsigned i = 0; i < PROCMON_MAX_EVENTS + 3; ++i) {
+    for (unsigned i = 0; i < PROCSENTINEL_MAX_EVENTS + 3; ++i) {
         ev.ProcessId = i;
-        ev.EventType = PROCMON_EVENT_CREATE;
+        ev.EventType = PROCSENTINEL_EVENT_CREATE;
         EventRingPush(&ring, &ev);
     }
-    CHECK(ring.count == PROCMON_MAX_EVENTS);
+    CHECK(ring.count == PROCSENTINEL_MAX_EVENTS);
     CHECK(ring.dropped == 3);
     CHECK(EventRingPop(&ring, &out) == 1);
     CHECK(out.ProcessId == 3); // 0,1,2 dropped
@@ -196,19 +196,19 @@ void run_protocol_tests()
 {
     std::cout << "--- Protocol / fromWire ---\n";
 
-    CHECK(sizeof(WireEvent) == sizeof(PROCMON_EVENT));
-    CHECK(sizeof(WireStats) == sizeof(PROCMON_STATS));
-    CHECK(PROCMON_MAX_PATH == 260);
-    CHECK(PROCMON_MAX_NAME == 16);
+    CHECK(sizeof(WireEvent) == sizeof(PROCSENTINEL_EVENT));
+    CHECK(sizeof(WireStats) == sizeof(PROCSENTINEL_STATS));
+    CHECK(PROCSENTINEL_MAX_PATH == 260);
+    CHECK(PROCSENTINEL_MAX_NAME == 16);
 
     WireEvent we{};
     we.Timestamp = 1234567890LL;
     we.ProcessId = 42;
     we.ParentProcessId = 4;
-    we.EventType = PROCMON_EVENT_EXIT;
-    we.State = PROCMON_STATE_EXITING;
-    std::strncpy(we.ImageName, "cmd.exe", PROCMON_MAX_NAME - 1);
-    std::strncpy(we.ImagePath, "C:\\Windows\\System32\\cmd.exe", PROCMON_MAX_PATH - 1);
+    we.EventType = PROCSENTINEL_EVENT_EXIT;
+    we.State = PROCSENTINEL_STATE_EXITING;
+    std::strncpy(we.ImageName, "cmd.exe", PROCSENTINEL_MAX_NAME - 1);
+    std::strncpy(we.ImagePath, "C:\\Windows\\System32\\cmd.exe", PROCSENTINEL_MAX_PATH - 1);
 
     Event e = Event::fromWire(we);
     CHECK(e.timestamp == 1234567890LL);
@@ -293,7 +293,7 @@ void run_mock_client_tests()
 
 int main()
 {
-    std::cout << "=== ProcessMonitor Unified Tests ===\n\n";
+    std::cout << "=== ProcSentinel Unified Tests ===\n\n";
 
     run_ring_tests();
     run_protocol_tests();

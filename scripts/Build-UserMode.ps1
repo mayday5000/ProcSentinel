@@ -1,12 +1,12 @@
 # ================================================
-# Build-UserMode.ps1  (package ProcessMonitor)
+# Build-UserMode.ps1  (package ProcSentinel)
 #
 # Builds:
-#   1) procmon_app.exe          (production user-mode app)
-#   2) procmon_unified_tests.exe     (mock / ring / protocol host tests)
+#   1) procsentinel_app.exe          (production user-mode app)
+#   2) procsentinel_unified_tests.exe     (mock / ring / protocol host tests)
 #
 # Optional: -RunTests runs the unified test binary after a successful build.
-# Driver / install scripts are separate (Build-Driver / install_procmon).
+# Driver / install scripts are separate (Build-Driver / install_procsentinel).
 # ================================================
 
 [CmdletBinding()]
@@ -31,20 +31,20 @@ $UserModeDir = Join-Path $ProjectRoot "usermode"
 $MockDir     = Join-Path $ProjectRoot "mock_tests"
 $SharedDir   = Join-Path $ProjectRoot "shared"
 
-$AppSource   = Join-Path $UserModeDir "procmon_app.cpp"
+$AppSource   = Join-Path $UserModeDir "procsentinel_app.cpp"
 $TestSource  = Join-Path $MockDir "main_test_runner.cpp"
 
 $OutDir      = Join-Path (Join-Path $UserModeDir $Platform) $Configuration
-$OutExe      = Join-Path $OutDir "procmon_app.exe"
+$OutExe      = Join-Path $OutDir "procsentinel_app.exe"
 $TestOutDir  = Join-Path (Join-Path $MockDir $Platform) $Configuration
-$TestExe     = Join-Path $TestOutDir "procmon_unified_tests.exe"
+$TestExe     = Join-Path $TestOutDir "procsentinel_unified_tests.exe"
 
 Write-Host "================================================" -ForegroundColor Cyan
-Write-Host "  ProcessMonitor - User-Mode Builder" -ForegroundColor Cyan
+Write-Host "  ProcSentinel - User-Mode Builder" -ForegroundColor Cyan
 Write-Host "================================================" -ForegroundColor Cyan
 Write-Host "Configuration : $Configuration"
 Write-Host "Platform      : $Platform"
-Write-Host "App           : $(if ($SkipApp) { 'SKIP' } else { 'procmon_app.cpp' })"
+Write-Host "App           : $(if ($SkipApp) { 'SKIP' } else { 'procsentinel_app.cpp' })"
 Write-Host "Mock tests    : $(if ($SkipTests) { 'SKIP' } else { 'main_test_runner.cpp' })"
 Write-Host ""
 
@@ -95,7 +95,7 @@ cd /d "$WorkDir"
 cl.exe $ClArgs
 if errorlevel 1 exit /b 1
 "@
-    $bat = Join-Path $env:TEMP ("build_procmon_" + [guid]::NewGuid().ToString("N") + ".bat")
+    $bat = Join-Path $env:TEMP ("build_procsentinel_" + [guid]::NewGuid().ToString("N") + ".bat")
     [System.IO.File]::WriteAllText($bat, $cmd, [System.Text.Encoding]::ASCII)
     & cmd.exe /c "`"$bat`""
     $code = $LASTEXITCODE
@@ -114,8 +114,8 @@ if (-not $SkipApp) {
     }
     New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 
-    $appCl = "$cflags $inc `"procmon_app.cpp`" /Fe`"$OutExe`" /Fo`"$OutDir\\`" kernel32.lib user32.lib advapi32.lib"
-    Invoke-ClBuild -WorkDir $UserModeDir -ClArgs $appCl -Label "procmon_app.exe"
+    $appCl = "$cflags $inc `"procsentinel_app.cpp`" /Fe`"$OutExe`" /Fo`"$OutDir\\`" kernel32.lib user32.lib advapi32.lib"
+    Invoke-ClBuild -WorkDir $UserModeDir -ClArgs $appCl -Label "procsentinel_app.exe"
 
     if (-not (Test-Path $OutExe)) {
         Write-Error "Expected output missing: $OutExe"
@@ -134,7 +134,7 @@ if (-not $SkipTests) {
 
     # main_test_runner.cpp is self-contained (includes shared_protocol.h + types.h)
     $testCl = "$cflags $inc `"main_test_runner.cpp`" /Fe`"$TestExe`" /Fo`"$TestOutDir\\`" kernel32.lib user32.lib advapi32.lib"
-    Invoke-ClBuild -WorkDir $MockDir -ClArgs $testCl -Label "procmon_unified_tests.exe"
+    Invoke-ClBuild -WorkDir $MockDir -ClArgs $testCl -Label "procsentinel_unified_tests.exe"
 
     if (-not (Test-Path $TestExe)) {
         Write-Error "Expected test output missing: $TestExe"

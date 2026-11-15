@@ -2,7 +2,7 @@
 # Increment-Version.ps1
 #
 # Purpose:
-#   Clone this workspace into a sibling ProcessMonitor_vN folder so a stuck
+#   Clone this workspace into a sibling ProcSentinel_vN folder so a stuck
 #   or still-loaded .sys does not block the next lab build.
 #
 # How it works:
@@ -19,9 +19,9 @@
 #     altitude is registered; this WDM driver does not use one)
 #
 # What it does not isolate:
-#   - First run from an unversioned folder: no old tag, so procmon_driver /
+#   - First run from an unversioned folder: no old tag, so procsentinel_driver /
 #     Build-Driver.ps1 are not renamed.
-#   - \Device\ProcMonDrv and \DosDevices\ProcMonDrv are not versioned.
+#   - \Device\ProcSentinelDrv and \DosDevices\ProcSentinelDrv are not versioned.
 #     Starting a second copy fails with STATUS_OBJECT_NAME_COLLISION.
 #     Run only one instance at a time.
 #   - Text replace is unanchored. Do not treat it as an identifier-only rewrite.
@@ -36,9 +36,9 @@ param()
 $ErrorActionPreference = "Stop"
 
 $ScriptRoot   = $PSScriptRoot
-$ProjectRoot  = Split-Path $ScriptRoot -Parent          # e.g. ...\ProcessMonitor
-$ParentDir    = Split-Path $ProjectRoot -Parent         # e.g. ...\ProcessMonitor
-$CurrentName  = Split-Path $ProjectRoot -Leaf           # e.g. ProcessMonitor
+$ProjectRoot  = Split-Path $ScriptRoot -Parent          # e.g. ...\ProcSentinel
+$ParentDir    = Split-Path $ProjectRoot -Parent         # e.g. ...\ProcSentinel
+$CurrentName  = Split-Path $ProjectRoot -Leaf           # e.g. ProcSentinel
 
 Write-Host ""
 Write-Host "================================================" -ForegroundColor Cyan
@@ -81,7 +81,7 @@ if (Test-Path $NewRoot) {
 
 # ---- Current altitude (best-effort from install script) ----
 $currentAltitude = 361001
-$installPs1 = Get-ChildItem -Path $ScriptRoot -Filter "install_procmon_v*.ps1" -ErrorAction SilentlyContinue |
+$installPs1 = Get-ChildItem -Path $ScriptRoot -Filter "install_procsentinel_v*.ps1" -ErrorAction SilentlyContinue |
               Select-Object -First 1
 if ($installPs1) {
     $m = Select-String -Path $installPs1.FullName -Pattern 'altitude\s*=\s*"?(\d+)"?' -AllMatches
@@ -103,14 +103,14 @@ Write-Host "[*] Updating version strings and altitude in new tree..." -Foregroun
 $oldVerTag = if ($CurrentName -match '_v(\d+)$') { "v$($Matches[1])" } else { $null }
 $newVerTag = "v$nextVer"
 
-$oldSys = if ($oldVerTag) { "procmon_driver_$oldVerTag" } else { "procmon_driver" }
-$newSys = "procmon_driver_$newVerTag"
-$oldApp = if ($oldVerTag) { "procmon_app_$oldVerTag" } else { "procmon_app" }
-$newApp = "procmon_app_$newVerTag"
-$oldInstall = if ($oldVerTag) { "install_procmon_$oldVerTag" } else { "install_procmon" }
-$newInstall = "install_procmon_$newVerTag"
-$oldUninstall = if ($oldVerTag) { "uninstall_procmon_$oldVerTag" } else { "uninstall_procmon" }
-$newUninstall = "uninstall_procmon_$newVerTag"
+$oldSys = if ($oldVerTag) { "procsentinel_driver_$oldVerTag" } else { "procsentinel_driver" }
+$newSys = "procsentinel_driver_$newVerTag"
+$oldApp = if ($oldVerTag) { "procsentinel_app_$oldVerTag" } else { "procsentinel_app" }
+$newApp = "procsentinel_app_$newVerTag"
+$oldInstall = if ($oldVerTag) { "install_procsentinel_$oldVerTag" } else { "install_procsentinel" }
+$newInstall = "install_procsentinel_$newVerTag"
+$oldUninstall = if ($oldVerTag) { "uninstall_procsentinel_$oldVerTag" } else { "uninstall_procsentinel" }
+$newUninstall = "uninstall_procsentinel_$newVerTag"
 $oldBuild = if ($oldVerTag) { "Build-Driver_$oldVerTag" } else { "Build-Driver" }
 $newBuild = "Build-Driver_$newVerTag"
 $oldBuildUm = if ($oldVerTag) { "Build-UserMode_$oldVerTag" } else { "Build-UserMode" }
@@ -163,7 +163,7 @@ if (-not ($cdAnswer -match '^[Nn]')) {
         Write-Host "Next steps:" -ForegroundColor Cyan
         Write-Host "  .\Build-Driver_$newVerTag.ps1"
         Write-Host "  .\Build-UserMode_$newVerTag.ps1"
-        Write-Host "  .\install_procmon_$newVerTag.ps1"
+        Write-Host "  .\install_procsentinel_$newVerTag.ps1"
     }
 } else {
     Write-Host "[*] New scripts folder: $newScripts"

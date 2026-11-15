@@ -11,12 +11,12 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="procmon_driver.c">
+    <ClCompile Include="procsentinel_driver.c">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <Inf Include="procmon_driver.inf">
+    <Inf Include="procsentinel_driver.inf">
       <Filter>Driver Files</Filter>
     </Inf>
   </ItemGroup>

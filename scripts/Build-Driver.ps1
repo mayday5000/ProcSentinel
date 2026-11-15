@@ -1,19 +1,19 @@
 # ================================================
 # Build-Driver.ps1
-# Builds the Process Monitor kernel driver
-# (procmon_driver.sys)
+# Builds the ProcSentinel kernel driver
+# (procsentinel_driver.sys)
 #
 # After a successful build the script also generates:
 #   - driver\debug.wds
 #   - driver\WinDbgWorkspace.xml
-#   - scripts\KDNet-ProcMonDrv.ps1   (interactive Port + Key)
+#   - scripts\KDNet-ProcSentinelDrv.ps1   (interactive Port + Key)
 #
 # Requirements:
 #   - Visual Studio 2019 / 2022 with "Desktop development with C++"
 #   - Windows Driver Kit (WDK) matching the Windows SDK version
 #   - A Visual Studio project (*.vcxproj / *.sln) created from the
 #     official "Empty WDM Driver" template, with the source replaced by
-#     driver\procmon_driver.c  OR  an existing solution that
+#     driver\procsentinel_driver.c  OR  an existing solution that
 #     already contains the driver project.
 #
 # Usage:
@@ -39,12 +39,12 @@ $ProjectRoot  = Split-Path $ScriptRoot -Parent
 $DriverDir    = Join-Path $ProjectRoot "driver"
 
 # Fixed names used throughout generation
-$driverName      = "ProcMonDrv"
-$sysModuleName   = "procmon_driver.sys"
-$symbolModule    = "procmon_driver"          # name used in breakpoints (no .sys)
+$driverName      = "ProcSentinelDrv"
+$sysModuleName   = "procsentinel_driver.sys"
+$symbolModule    = "procsentinel_driver"          # name used in breakpoints (no .sys)
 
 Write-Host "================================================" -ForegroundColor Cyan
-Write-Host "  ProcessMonitor - Kernel Driver Builder" -ForegroundColor Cyan
+Write-Host "  ProcSentinel - Kernel Driver Builder" -ForegroundColor Cyan
 Write-Host "================================================" -ForegroundColor Cyan
 Write-Host "Configuration : $Configuration"
 Write-Host "Platform      : $Platform"
@@ -95,8 +95,8 @@ else {
     Write-Host "HOW TO CREATE THE PROJECT (one-time):" -ForegroundColor Cyan
     Write-Host "  1. Open Visual Studio → Create a new project"
     Write-Host "  2. Search for 'Empty WDM Driver'"
-    Write-Host "  3. Name it procmon_driver, place it in the 'driver' folder"
-    Write-Host "  4. Replace the generated .c file with procmon_driver.c"
+    Write-Host "  3. Name it procsentinel_driver, place it in the 'driver' folder"
+    Write-Host "  4. Replace the generated .c file with procsentinel_driver.c"
     Write-Host "  5. Add the .inf file to the project"
     Write-Host "  6. Re-run this script"
     Write-Host ""
@@ -472,7 +472,7 @@ Write-Host "  WinDbgWorkspace.xml  : $workspacePath"
 Write-Host "  KDNet launcher       : $kdnetScriptPath"
 Write-Host ""
 Write-Host "Next steps:" -ForegroundColor Cyan
-Write-Host "  1. Install the driver on the target (install_procmon.ps1)"
+Write-Host "  1. Install the driver on the target (install_procsentinel.ps1)"
 Write-Host "  2. On the host run:  .\$kdnetScriptName"
 Write-Host "  3. After KDNET connects type:  `$`$< $wdsPath"
 Write-Host ""

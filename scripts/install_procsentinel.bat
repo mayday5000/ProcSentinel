@@ -2,14 +2,14 @@
 setlocal enabledelayedexpansion
 
 :: ================================================
-:: install_procmon.bat
-:: Same logic as install_procmon.ps1
+:: install_procsentinel.bat
+:: Same logic as install_procsentinel.ps1
 :: WDM kernel service (sc create type= kernel)
 :: ================================================
 
-set "serviceName=ProcMonDrv"
-set "sysModuleName=procmon_driver.sys"
-set "pdbModuleName=procmon_driver.pdb"
+set "serviceName=ProcSentinelDrv"
+set "sysModuleName=procsentinel_driver.sys"
+set "pdbModuleName=procsentinel_driver.pdb"
 set "displayName=Process Activity Monitor Driver"
 set "targetSys=C:\Windows\System32\drivers\%sysModuleName%"
 set "targetPdb=C:\Windows\System32\drivers\%pdbModuleName%"
@@ -20,7 +20,7 @@ set "sourcePdb=%relativeDriverPath%\%pdbModuleName%"
 
 echo.
 echo ================================================
-echo   ProcessMonitor - Driver Installation
+echo   ProcSentinel - Driver Installation
 echo   Service : %serviceName%  (WDM kernel)
 echo ================================================
 echo.
@@ -104,7 +104,7 @@ echo.
 
 echo ================================================
 echo   INSTALLATION COMPLETE
-echo   Run procmon_app.exe as Administrator.
+echo   Run procsentinel_app.exe as Administrator.
 echo ================================================
 echo.
 pause

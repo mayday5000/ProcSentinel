@@ -1,15 +1,15 @@
 #Requires -RunAsAdministrator
 # ================================================
-# install_procmon.ps1
-# Installs / reinstalls the Process Monitor
-# WDM kernel driver (ProcMonDrv) on the TARGET machine.
+# install_procsentinel.ps1
+# Installs / reinstalls the ProcSentinel
+# WDM kernel driver (ProcSentinelDrv) on the TARGET machine.
 #
 # Service type : kernel (SERVICE_KERNEL_DRIVER)
 # Start type   : demand (SERVICE_DEMAND_START)
 #
 # Usage:
-#   .\install_procmon.ps1
-#   .\install_procmon.ps1 -Configuration Release
+#   .\install_procsentinel.ps1
+#   .\install_procsentinel.ps1 -Configuration Release
 # ================================================
 
 [CmdletBinding()]
@@ -26,9 +26,9 @@ $ScriptRoot  = $PSScriptRoot
 $ProjectRoot = Split-Path $ScriptRoot -Parent
 $DriverDir   = Join-Path $ProjectRoot "driver"
 
-$serviceName   = "ProcMonDrv"
-$sysModuleName = "procmon_driver.sys"
-$pdbModuleName = "procmon_driver.pdb"
+$serviceName   = "ProcSentinelDrv"
+$sysModuleName = "procsentinel_driver.sys"
+$pdbModuleName = "procsentinel_driver.pdb"
 $displayName   = "Process Activity Monitor Driver"
 $targetSys     = "C:\Windows\System32\drivers\$sysModuleName"
 $targetPdb     = "C:\Windows\System32\drivers\$pdbModuleName"
@@ -36,7 +36,7 @@ $svcKey        = "HKLM:\SYSTEM\CurrentControlSet\Services\$serviceName"
 
 Write-Host ""
 Write-Host "================================================" -ForegroundColor Cyan
-Write-Host "  ProcessMonitor - Driver Installation" -ForegroundColor Cyan
+Write-Host "  ProcSentinel - Driver Installation" -ForegroundColor Cyan
 Write-Host "  Service  : $serviceName  (WDM kernel)" -ForegroundColor Cyan
 Write-Host "================================================" -ForegroundColor Cyan
 Write-Host ""
@@ -137,5 +137,5 @@ Write-Host ""
 
 Write-Host "================================================" -ForegroundColor Green
 Write-Host "  INSTALLATION COMPLETE" -ForegroundColor Green
-Write-Host "  Run procmon_app.exe as Administrator." -ForegroundColor Green
+Write-Host "  Run procsentinel_app.exe as Administrator." -ForegroundColor Green
 Write-Host "================================================" -ForegroundColor Green

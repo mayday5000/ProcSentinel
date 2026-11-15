@@ -1,20 +1,20 @@
 #Requires -RunAsAdministrator
 # ================================================
-# uninstall_procmon.ps1
-# Stops and removes ProcMonDrv completely.
+# uninstall_procsentinel.ps1
+# Stops and removes ProcSentinelDrv completely.
 # ================================================
 
 $ErrorActionPreference = "Continue"
-$serviceName   = "ProcMonDrv"
-$sysModuleName = "procmon_driver.sys"
-$pdbModuleName = "procmon_driver.pdb"
+$serviceName   = "ProcSentinelDrv"
+$sysModuleName = "procsentinel_driver.sys"
+$pdbModuleName = "procsentinel_driver.pdb"
 $targetSys     = "C:\Windows\System32\drivers\$sysModuleName"
 $targetPdb     = "C:\Windows\System32\drivers\$pdbModuleName"
 $svcKey        = "HKLM:\SYSTEM\CurrentControlSet\Services\$serviceName"
 
 Write-Host ""
 Write-Host "================================================" -ForegroundColor Cyan
-Write-Host "  ProcessMonitor - Uninstall" -ForegroundColor Cyan
+Write-Host "  ProcSentinel - Uninstall" -ForegroundColor Cyan
 Write-Host "================================================" -ForegroundColor Cyan
 Write-Host ""
 
@@ -52,5 +52,5 @@ Write-Host ""
 Write-Host "=== Verification ===" -ForegroundColor Cyan
 & sc.exe query $serviceName 2>$null
 Write-Host ""
-Write-Host "[+] Uninstall finished. You can reinstall with install_procmon.ps1" -ForegroundColor Green
+Write-Host "[+] Uninstall finished. You can reinstall with install_procsentinel.ps1" -ForegroundColor Green
 Write-Host ""

@@ -1,8 +1,8 @@
-# ProcessMonitor
+# ProcSentinel
 
 A Windows kernel-mode (WDM) process activity monitor paired with a C++23 user-mode control client and host-side unit tests.
 
-The driver tracks real-time process creation and termination via kernel callbacks, stores telemetry in a spinlock-protected non-paged ring buffer, and exposes a control device (`\\.\ProcMonDrv`) over `METHOD_BUFFERED` IOCTLs. The user-mode console client queries live process snapshots, drains telemetry events to TSV logs, and performs bounded process image memory reads.
+The driver tracks real-time process creation and termination via kernel callbacks, stores telemetry in a spinlock-protected non-paged ring buffer, and exposes a control device (`\\.\ProcSentinelDrv`) over `METHOD_BUFFERED` IOCTLs. The user-mode console client queries live process snapshots, drains telemetry events to TSV logs, and performs bounded process image memory reads.
 
 **Author:** Damian Andres Ulanowicz
 
@@ -30,10 +30,10 @@ The driver tracks real-time process creation and termination via kernel callback
   User Mode (C++23)                     Kernel Mode (WDM C)
   +------------------+                  +-----------------------------------+
 
-  | procmon_app.exe  |                  | procmon_driver.sys                |
+  | procsentinel_app.exe  |                  | procsentinel_driver.sys                |
   |                  |  CreateFileA     |                                   |
-  |  Interactive CLI |----------------->|  \Device\ProcMonDrv               |
-  |  DriverClient    |  DeviceIoControl |  Symlink: \\.\ProcMonDrv          |
+  |  Interactive CLI |----------------->|  \Device\ProcSentinelDrv               |
+  |  DriverClient    |  DeviceIoControl |  Symlink: \\.\ProcSentinelDrv          |
   |  (RAII Handle)   |<-----------------|                                   |
   +------------------+                  |  PsSetCreateProcessNotifyRoutineEx|
 
@@ -58,8 +58,8 @@ The driver tracks real-time process creation and termination via kernel callback
      ┌─────┴──────────────────┬──────────────────┐
      ▼                        ▼                  ▼
   driver/                 usermode/          mock_tests/
-  procmon_driver.c        types.h            main_test_runner.cpp
-  (WDM Kernel C)          procmon_app.cpp    (Ring logic, fromWire, mock client)
+  procsentinel_driver.c        types.h            main_test_runner.cpp
+  (WDM Kernel C)          procsentinel_app.cpp    (Ring logic, fromWire, mock client)
                           (C++23 Client)
 ```
 
@@ -68,11 +68,11 @@ The driver tracks real-time process creation and termination via kernel callback
 
 ---
 
-## Kernel Driver Internals (`driver/procmon_driver.c`)
+## Kernel Driver Internals (`driver/procsentinel_driver.c`)
 
 ### 1. Process Notification Path
 
-`DriverEntry` initializes the `KSPIN_LOCK` and global ring buffer, creates `\Device\ProcMonDrv` with `FILE_DEVICE_SECURE_OPEN`, and registers `ProcessNotifyCallback` via `PsSetCreateProcessNotifyRoutineEx`.
+`DriverEntry` initializes the `KSPIN_LOCK` and global ring buffer, creates `\Device\ProcSentinelDrv` with `FILE_DEVICE_SECURE_OPEN`, and registers `ProcessNotifyCallback` via `PsSetCreateProcessNotifyRoutineEx`.
 
 ```text
   PsSetCreateProcessNotifyRoutineEx
@@ -80,18 +80,18 @@ The driver tracks real-time process creation and termination via kernel callback
             ▼
   ProcessNotifyCallback (PASSIVE_LEVEL, kernel APCs disabled)
             │
-            ├── CreateInfo != NULL ──► PROCMON_EVENT_CREATE
+            ├── CreateInfo != NULL ──► PROCSENTINEL_EVENT_CREATE
             │     • Short name via PsGetProcessImageFileName()
             │     • Full image path via CreateInfo->ImageFileName (when available)
             │
-            └── CreateInfo == NULL ──► PROCMON_EVENT_EXIT
+            └── CreateInfo == NULL ──► PROCSENTINEL_EVENT_EXIT
             │
             ▼
   KeAcquireSpinLock(&g_RingLock)  ──► Raises IRQL to DISPATCH_LEVEL
             │
             ▼
   EventRingPushKernel()
-            │  • Fixed capacity: PROCMON_MAX_EVENTS (2048 entries)
+            │  • Fixed capacity: PROCSENTINEL_MAX_EVENTS (2048 entries)
             │  • Overflow policy: Drop-oldest (advances tail, increments DroppedEvents)
             ▼
   KeReleaseSpinLock(&g_RingLock)  ──► Restores IRQL to PASSIVE_LEVEL
@@ -103,13 +103,13 @@ All control codes use `METHOD_BUFFERED`. The Windows I/O Manager allocates a non
 
 | IOCTL Code | Direction | Kernel Behavior |
 | :--- | :--- | :--- |
-| `IOCTL_PROCMON_GET_STATS` | Out | Copies a consistent snapshot of `PROCMON_STATS` under `g_RingLock`. |
-| `IOCTL_PROCMON_GET_EVENTS` | Out | Drains up to `outLen / sizeof(PROCMON_EVENT)` events from the ring tail under lock. |
-| `IOCTL_PROCMON_START_MONITOR` | None | Sets `g_MonitoringEnabled = TRUE` to begin recording notify callbacks. |
-| `IOCTL_PROCMON_STOP_MONITOR` | None | Sets `g_MonitoringEnabled = FALSE` to pause event ingestion. |
-| `IOCTL_PROCMON_RESET_STATS` | None | Zeroes counters and resets ring indices under `g_RingLock`. |
-| `IOCTL_PROCMON_GET_PROCESS_LIST` | Out | Queries `SystemProcessInformation`, looks up each `PEPROCESS`, and checks protection status. |
-| `IOCTL_PROCMON_DUMP_PROCESS` | In / Out | Resolves target `PEPROCESS` by short image name, parses PE `SizeOfImage`, and copies up to `PROCMON_DUMP_MAX_SIZE` (4 MB) via `MmCopyVirtualMemory`. |
+| `IOCTL_PROCSENTINEL_GET_STATS` | Out | Copies a consistent snapshot of `PROCSENTINEL_STATS` under `g_RingLock`. |
+| `IOCTL_PROCSENTINEL_GET_EVENTS` | Out | Drains up to `outLen / sizeof(PROCSENTINEL_EVENT)` events from the ring tail under lock. |
+| `IOCTL_PROCSENTINEL_START_MONITOR` | None | Sets `g_MonitoringEnabled = TRUE` to begin recording notify callbacks. |
+| `IOCTL_PROCSENTINEL_STOP_MONITOR` | None | Sets `g_MonitoringEnabled = FALSE` to pause event ingestion. |
+| `IOCTL_PROCSENTINEL_RESET_STATS` | None | Zeroes counters and resets ring indices under `g_RingLock`. |
+| `IOCTL_PROCSENTINEL_GET_PROCESS_LIST` | Out | Queries `SystemProcessInformation`, looks up each `PEPROCESS`, and checks protection status. |
+| `IOCTL_PROCSENTINEL_DUMP_PROCESS` | In / Out | Resolves target `PEPROCESS` by short image name, parses PE `SizeOfImage`, and copies up to `PROCSENTINEL_DUMP_MAX_SIZE` (4 MB) via `MmCopyVirtualMemory`. |
 
 ### 3. IRQL & Memory Residency Rules
 
@@ -124,13 +124,13 @@ All control codes use `METHOD_BUFFERED`. The Windows I/O Manager allocates a non
 
 ## User-Mode Client (`usermode/`)
 
-`procmon_app.exe` opens `\\.\ProcMonDrv` via `DriverClient::open()` and manages the device descriptor using an RAII `UniqueHandle` wrapper.
+`procsentinel_app.exe` opens `\\.\ProcSentinelDrv` via `DriverClient::open()` and manages the device descriptor using an RAII `UniqueHandle` wrapper.
 
 ```text
   main()
     │
     ▼
-  DriverClient::open() ──► CreateFileA("\\\\.\\ProcMonDrv")
+  DriverClient::open() ──► CreateFileA("\\\\.\\ProcSentinelDrv")
     │
     ▼
   Interactive Menu Loop
@@ -143,21 +143,21 @@ All control codes use `METHOD_BUFFERED`. The Windows I/O Manager allocates a non
     │          ▼
     │    fromWire() ──► Domain structs (std::expected<T, std::string>)
     │
-    └──► EventLog::appendBatch() ──► Appends TSV rows to procmon_events/events.tsv
+    └──► EventLog::appendBatch() ──► Appends TSV rows to procsentinel_events/events.tsv
 ```
 
 ### CLI Menu Reference
 
 | Option | Operation | Underlying IOCTL |
 | :---: | :--- | :--- |
-| **1** | Print live telemetry counters (creates, exits, queued, dropped, dumps) | `IOCTL_PROCMON_GET_STATS` |
-| **2** | Enable kernel process monitoring | `IOCTL_PROCMON_START_MONITOR` |
-| **3** | Disable kernel process monitoring | `IOCTL_PROCMON_STOP_MONITOR` |
-| **4** | Reset statistics and flush the kernel event ring | `IOCTL_PROCMON_RESET_STATS` |
-| **5** | Drain and display pending create/exit events | `IOCTL_PROCMON_GET_EVENTS` |
-| **6** | Display live process snapshot (PID, PPID, Protected flag, State, Name) | `IOCTL_PROCMON_GET_PROCESS_LIST` |
-| **7** | Dump process memory image by short name (e.g., `notepad.exe`) to disk | `IOCTL_PROCMON_DUMP_PROCESS` |
-| **8** | Drain pending events and append to `procmon_events/events.tsv` | `IOCTL_PROCMON_GET_EVENTS` |
+| **1** | Print live telemetry counters (creates, exits, queued, dropped, dumps) | `IOCTL_PROCSENTINEL_GET_STATS` |
+| **2** | Enable kernel process monitoring | `IOCTL_PROCSENTINEL_START_MONITOR` |
+| **3** | Disable kernel process monitoring | `IOCTL_PROCSENTINEL_STOP_MONITOR` |
+| **4** | Reset statistics and flush the kernel event ring | `IOCTL_PROCSENTINEL_RESET_STATS` |
+| **5** | Drain and display pending create/exit events | `IOCTL_PROCSENTINEL_GET_EVENTS` |
+| **6** | Display live process snapshot (PID, PPID, Protected flag, State, Name) | `IOCTL_PROCSENTINEL_GET_PROCESS_LIST` |
+| **7** | Dump process memory image by short name (e.g., `notepad.exe`) to disk | `IOCTL_PROCSENTINEL_DUMP_PROCESS` |
+| **8** | Drain pending events and append to `procsentinel_events/events.tsv` | `IOCTL_PROCSENTINEL_GET_EVENTS` |
 | **0** | Close device handle and exit | — |
 
 ---
@@ -171,8 +171,8 @@ All control codes use `METHOD_BUFFERED`. The Windows I/O Manager allocates a non
    ```
 3. **Service Registration (Admin CMD/PowerShell):**
    ```cmd
-   sc.exe create ProcMonDrv type= kernel binPath= C:\Windows\System32\drivers\procmon_driver.sys
-   sc.exe start ProcMonDrv
+   sc.exe create ProcSentinelDrv type= kernel binPath= C:\Windows\System32\drivers\procsentinel_driver.sys
+   sc.exe start ProcSentinelDrv
    ```
 
 ---
@@ -199,7 +199,7 @@ From the `scripts` directory.
 .\Build-UserMode.ps1
 ```
 
-Compiles `procmon_app.exe` and `procmon_unified_tests.exe`.
+Compiles `procsentinel_app.exe` and `procsentinel_unified_tests.exe`.
 
 ```powershell
 .\Build-UserMode.ps1 -RunTests
@@ -210,7 +210,7 @@ Compiles and runs the unified tests.
 Example:
 
 ```
-=== ProcessMonitor Unified Tests ===
+=== ProcSentinel Unified Tests ===
 
 --- Low-Level C Ring ---
 [PASS] Low-Level C Ring Assertions Complete
@@ -229,7 +229,7 @@ ALL TESTS PASSED
 .\Build-Driver.ps1
 ```
 
-Builds `driver\x64\Debug\procmon_driver.sys` (or Release if requested). On success it also writes `driver\debug.wds`, `driver\WinDbgWorkspace.xml`, and `scripts\KDNet-ProcMonDrv.ps1`.
+Builds `driver\x64\Debug\procsentinel_driver.sys` (or Release if requested). On success it also writes `driver\debug.wds`, `driver\WinDbgWorkspace.xml`, and `scripts\KDNet-ProcSentinelDrv.ps1`.
 
 ```powershell
 .\Build-Driver.ps1 -Configuration Release -Platform x64
@@ -243,20 +243,20 @@ Builds `driver\x64\Debug\procmon_driver.sys` (or Release if requested). On succe
 Run the install script as Administrator after the driver has been built.
 
 ```powershell
-.\install_procmon.ps1
+.\install_procsentinel.ps1
 ```
 
 Typical successful output:
 
 ```
 ================================================
-  ProcessMonitor - Driver Installation
-  Service  : ProcMonDrv  (WDM kernel)
+  ProcSentinel - Driver Installation
+  Service  : ProcSentinelDrv  (WDM kernel)
 ================================================
 
-[OK] Found driver binary: ...\driver\x64\Debug\procmon_driver.sys
+[OK] Found driver binary: ...\driver\x64\Debug\procsentinel_driver.sys
 Stopping / deleting old service (if any)...
-Copying procmon_driver.sys -> C:\Windows\System32\drivers\procmon_driver.sys ...
+Copying procsentinel_driver.sys -> C:\Windows\System32\drivers\procsentinel_driver.sys ...
 [SUCCESS] Driver binary copied.
 [SUCCESS] PDB copied.
 Creating kernel service...
@@ -264,7 +264,7 @@ Creating kernel service...
 [SUCCESS] Service created.
 Starting driver...
 
-SERVICE_NAME: ProcMonDrv
+SERVICE_NAME: ProcSentinelDrv
         TYPE               : 1  KERNEL_DRIVER
         STATE              : 4  RUNNING
                                 (STOPPABLE, NOT_PAUSABLE, IGNORES_SHUTDOWN)
@@ -274,18 +274,18 @@ SERVICE_NAME: ProcMonDrv
 [SUCCESS] Driver started.
 ================================================
   INSTALLATION COMPLETE
-  Run procmon_app.exe as Administrator.
+  Run procsentinel_app.exe as Administrator.
 ================================================
 ```
 
 Verify from PowerShell (use `sc.exe`, not `sc` — `sc` is an alias for `Set-Content`):
 
 ```powershell
-sc.exe query ProcMonDrv
+sc.exe query ProcSentinelDrv
 ```
 
 ```
-SERVICE_NAME: ProcMonDrv
+SERVICE_NAME: ProcSentinelDrv
         TYPE               : 1  KERNEL_DRIVER
         STATE              : 4  RUNNING
 ```
@@ -293,17 +293,17 @@ SERVICE_NAME: ProcMonDrv
 Start the client as Administrator:
 
 ```powershell
-..\usermode\x64\Debug\procmon_app.exe
+..\usermode\x64\Debug\procsentinel_app.exe
 ```
 
 Example session:
 
 ```
-=== ProcessMonitor (C++23) ===
+=== ProcSentinel (C++23) ===
 Built: Nov 15 2026 13:40:00
-Requires ProcMonDrv kernel driver loaded.
+Requires ProcSentinelDrv kernel driver loaded.
 
-=== ProcessMonitor User Application ===
+=== ProcSentinel User Application ===
 1. Show statistics
 2. Start monitoring
 3. Stop monitoring
@@ -350,18 +350,18 @@ Goodbye.
 If the driver is not loaded:
 
 ```
-[ERROR] Driver not loaded. Device \\.\ProcMonDrv not found. Run install script as Administrator first.
+[ERROR] Driver not loaded. Device \\.\ProcSentinelDrv not found. Run install script as Administrator first.
 ```
 
 Uninstall (Administrator):
 
 ```powershell
-.\uninstall_procmon.ps1
+.\uninstall_procsentinel.ps1
 ```
 
 ```
 ================================================
-  ProcessMonitor - Uninstall
+  ProcSentinel - Uninstall
 ================================================
 [OK] Service stopped.
 [OK] Service deleted.
@@ -378,7 +378,7 @@ All scripts live in `scripts/`. Run them from that directory.
 
 Builds the WDM driver with MSBuild and, after a successful build, generates WinDbg / KDNET helpers.
 
-**When to use:** after changing `procmon_driver.c` or the project files, before install.
+**When to use:** after changing `procsentinel_driver.c` or the project files, before install.
 
 ```powershell
 .\Build-Driver.ps1
@@ -386,23 +386,23 @@ Builds the WDM driver with MSBuild and, after a successful build, generates WinD
 .\Build-Driver.ps1 -Clean
 ```
 
-**Produces:** `driver\x64\<Config>\procmon_driver.sys`, `driver\debug.wds`, `driver\WinDbgWorkspace.xml`, `scripts\KDNet-ProcMonDrv.ps1`.
+**Produces:** `driver\x64\<Config>\procsentinel_driver.sys`, `driver\debug.wds`, `driver\WinDbgWorkspace.xml`, `scripts\KDNet-ProcSentinelDrv.ps1`.
 
 **Example output (success):**
 
 ```
-Building procmon_driver (Debug|x64)...
-[SUCCESS] procmon_driver.sys
+Building procsentinel_driver (Debug|x64)...
+[SUCCESS] procsentinel_driver.sys
 [OK] Wrote driver\debug.wds
 [OK] Wrote driver\WinDbgWorkspace.xml
-[OK] Wrote scripts\KDNet-ProcMonDrv.ps1
+[OK] Wrote scripts\KDNet-ProcSentinelDrv.ps1
 ```
 
 ### Build-UserMode.ps1
 
 Compiles the C++23 client and the unified mock tests with `cl`. Does not build or load the driver.
 
-**When to use:** after changing `procmon_app.cpp`, `types.h`, `shared_protocol.h`, or the test runner. Use `-RunTests` before packaging.
+**When to use:** after changing `procsentinel_app.cpp`, `types.h`, `shared_protocol.h`, or the test runner. Use `-RunTests` before packaging.
 
 ```powershell
 .\Build-UserMode.ps1
@@ -411,45 +411,45 @@ Compiles the C++23 client and the unified mock tests with `cl`. Does not build o
 .\Build-UserMode.ps1 -SkipTests
 ```
 
-**Produces:** `usermode\x64\<Config>\procmon_app.exe` and `mock_tests\x64\<Config>\procmon_unified_tests.exe`.
+**Produces:** `usermode\x64\<Config>\procsentinel_app.exe` and `mock_tests\x64\<Config>\procsentinel_unified_tests.exe`.
 
 **Example output:**
 
 ```
-App           : procmon_app.cpp
+App           : procsentinel_app.cpp
 Tests         : main_test_runner.cpp
-[OK] procmon_app.exe
-[OK] procmon_unified_tests.exe
-=== ProcessMonitor Unified Tests ===
+[OK] procsentinel_app.exe
+[OK] procsentinel_unified_tests.exe
+=== ProcSentinel Unified Tests ===
 ALL TESTS PASSED
 ```
 
-### install_procmon.ps1 / install_procmon.bat
+### install_procsentinel.ps1 / install_procsentinel.bat
 
-Stops any previous `ProcMonDrv` service, copies `procmon_driver.sys` (and the PDB) into `C:\Windows\System32\drivers`, creates a kernel service with `sc.exe`, and starts it.
+Stops any previous `ProcSentinelDrv` service, copies `procsentinel_driver.sys` (and the PDB) into `C:\Windows\System32\drivers`, creates a kernel service with `sc.exe`, and starts it.
 
 **When to use:** after a successful driver build, on a machine with test signing enabled. Must run as Administrator.
 
 ```powershell
-.\install_procmon.ps1
-.\install_procmon.ps1 -Configuration Release
+.\install_procsentinel.ps1
+.\install_procsentinel.ps1 -Configuration Release
 ```
 
 The `.bat` is a thin wrapper around the same PowerShell script.
 
-### uninstall_procmon.ps1 / uninstall_procmon.bat
+### uninstall_procsentinel.ps1 / uninstall_procsentinel.bat
 
 Stops the service, deletes it, and removes the copied `.sys` and `.pdb`.
 
 **When to use:** before replacing the binary, or when you are done with the lab machine.
 
 ```powershell
-.\uninstall_procmon.ps1
+.\uninstall_procsentinel.ps1
 ```
 
 ### Increment-Version.ps1
 
-Clones the current tree into a sibling `ProcessMonitor_vN` folder so a stuck or still-loaded binary does not block the next build. Optional. See the dedicated section below for what it rewrites and what it does not isolate.
+Clones the current tree into a sibling `ProcSentinel_vN` folder so a stuck or still-loaded binary does not block the next build. Optional. See the dedicated section below for what it rewrites and what it does not isolate.
 
 **When to use:** when you want a numbered sibling workspace for the next lab iteration.
 
@@ -462,21 +462,21 @@ Clones the current tree into a sibling `ProcessMonitor_vN` folder so a stuck or 
 ```
 Build-UserMode.ps1 -RunTests
 Build-Driver.ps1
-install_procmon.ps1
-procmon_app.exe
-uninstall_procmon.ps1
+install_procsentinel.ps1
+procsentinel_app.exe
+uninstall_procsentinel.ps1
 ```
 
 ---
 
 ## Versioning & Parallel Lab Builds (`scripts/Increment-Version.ps1`)
 
-During kernel driver development, an unloaded or stuck driver binary (`.sys`) can remain locked in memory until reboot, blocking subsequent builds or service restarts. `scripts/Increment-Version.ps1` streamlines iterative testing by cloning the workspace into a versioned sibling directory (`ProcessMonitor_vN`) with isolated build and deployment identifiers.
+During kernel driver development, an unloaded or stuck driver binary (`.sys`) can remain locked in memory until reboot, blocking subsequent builds or service restarts. `scripts/Increment-Version.ps1` streamlines iterative testing by cloning the workspace into a versioned sibling directory (`ProcSentinel_vN`) with isolated build and deployment identifiers.
 
 ### What It Does
 
-1. **Workspace Cloning:** Detects the current folder's `_vN` suffix (or initializes `_v1` from an unversioned root) and copies the full project tree into `../ProcessMonitor_v(N+1)`.
-2. **Artifact & Script Renaming:** Updates version suffixes across build, install, and binary targets (e.g., `procmon_driver_v1` → `procmon_driver_v2`, `Build-Driver_v1.ps1` → `Build-Driver_v2.ps1`).
+1. **Workspace Cloning:** Detects the current folder's `_vN` suffix (or initializes `_v1` from an unversioned root) and copies the full project tree into `../ProcSentinel_v(N+1)`.
+2. **Artifact & Script Renaming:** Updates version suffixes across build, install, and binary targets (e.g., `procsentinel_driver_v1` → `procsentinel_driver_v2`, `Build-Driver_v1.ps1` → `Build-Driver_v2.ps1`).
 3. **Configuration & Altitude Rewriting:** Replaces project/version identifiers across `.c`, `.cpp`, `.h`, `.ps1`, `.inf`, and `.vcxproj` files, and increments the registration altitude (`+1`) in deployment scripts to avoid altitude conflicts if filter or callback altitudes are used.
 
 ### Usage
@@ -484,11 +484,11 @@ During kernel driver development, an unloaded or stuck driver binary (`.sys`) ca
 Run from the `scripts\` directory of your current version:
 
 ```powershell
-cd ProcessMonitor_v1\scripts
+cd ProcSentinel_v1\scripts
 .\Increment-Version.ps1
 ```
 
-> **Note on Device Names:** While `Increment-Version.ps1` isolates binary filenames, service names, and altitude values across versions, `\Device\ProcMonDrv` and `\\.\ProcMonDrv` remain shared unless version-suffixed—so only one driver instance should be started at a time.
+> **Note on Device Names:** While `Increment-Version.ps1` isolates binary filenames, service names, and altitude values across versions, `\Device\ProcSentinelDrv` and `\\.\ProcSentinelDrv` remain shared unless version-suffixed—so only one driver instance should be started at a time.
 
 ### What the script isolates, and what it does not
 
@@ -501,8 +501,8 @@ The script is a lab helper for stuck binaries. It is not a full multi-instance i
 
 **Not handled:**
 
-- First run from an unversioned folder (`ProcessMonitor` → `ProcessMonitor_v1`): there is no old tag, so file renames of `procmon_driver` / `Build-Driver.ps1` are skipped. The clone keeps the same binary name.
-- Device and symlink names in the driver (`\Device\ProcMonDrv`, `\DosDevices\ProcMonDrv`) do not contain a version tag. Two loaded copies try to create the same object and the second fails with `STATUS_OBJECT_NAME_COLLISION` (`0xC0000035`). Start only one instance.
+- First run from an unversioned folder (`ProcSentinel` → `ProcSentinel_v1`): there is no old tag, so file renames of `procsentinel_driver` / `Build-Driver.ps1` are skipped. The clone keeps the same binary name.
+- Device and symlink names in the driver (`\Device\ProcSentinelDrv`, `\DosDevices\ProcSentinelDrv`) do not contain a version tag. Two loaded copies try to create the same object and the second fails with `STATUS_OBJECT_NAME_COLLISION` (`0xC0000035`). Start only one instance.
 - The text replace is unanchored. A tag such as `v1` is replaced wherever it appears in the scanned files. Do not rely on the script to rewrite only identifiers.
 - The altitude number is replaced wherever that exact digit string appears, not only in an altitude assignment.
 
@@ -537,8 +537,8 @@ The mock runner does not need Windows or a loaded driver. It checks:
 On a machine with a C++23 compiler:
 
 ```bash
-g++ -std=c++23 -I shared -I usermode -o procmon_unified_tests mock_tests/main_test_runner.cpp
-./procmon_unified_tests
+g++ -std=c++23 -I shared -I usermode -o procsentinel_unified_tests mock_tests/main_test_runner.cpp
+./procsentinel_unified_tests
 ```
 
 Expected result: `ALL TESTS PASSED`.
@@ -549,13 +549,13 @@ Expected result: `ALL TESTS PASSED`.
 
 | Symptom | Likely cause |
 |---------|----------------|
-| `Device \\.\ProcMonDrv not found` | Service not installed or not started |
-| `sc query` shows nothing in PowerShell | `sc` is `Set-Content`; use `sc.exe query ProcMonDrv` |
+| `Device \\.\ProcSentinelDrv not found` | Service not installed or not started |
+| `sc query` shows nothing in PowerShell | `sc` is `Set-Content`; use `sc.exe query ProcSentinelDrv` |
 | Driver will not load | Test signing off, or binary not signed for this machine |
 | `DUMP_PROCESS` returns 0 | Name mismatch (must be the short image name), or process exited |
 | Ring count stays 0 | Monitoring was not started, or events were already drained |
 | Dropped events increase | Ring is full (2048); oldest entries were discarded |
-| `STATUS_OBJECT_NAME_COLLISION` on load | Another instance already created `\Device\ProcMonDrv` |
+| `STATUS_OBJECT_NAME_COLLISION` on load | Another instance already created `\Device\ProcSentinelDrv` |
 
 ---
 

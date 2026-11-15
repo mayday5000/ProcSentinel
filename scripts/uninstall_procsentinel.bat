@@ -1,12 +1,12 @@
 @echo off
 setlocal
-set "serviceName=ProcMonDrv"
-set "sysModuleName=procmon_driver.sys"
-set "pdbModuleName=procmon_driver.pdb"
+set "serviceName=ProcSentinelDrv"
+set "sysModuleName=procsentinel_driver.sys"
+set "pdbModuleName=procsentinel_driver.pdb"
 
 echo.
 echo ================================================
-echo   ProcessMonitor - Uninstall
+echo   ProcSentinel - Uninstall
 echo ================================================
 echo.
 

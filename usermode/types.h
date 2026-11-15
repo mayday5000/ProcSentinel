@@ -1,7 +1,7 @@
 #pragma once
 /*
  * types.h — C++ domain types built on shared_protocol.h (single wire layout).
- * ProcessMonitor
+ * ProcSentinel
  */
 
 #include "../shared/shared_protocol.h"
@@ -18,23 +18,23 @@
 #  include <windows.h>
 #endif
 
-namespace procmon {
+namespace procsentinel {
 
-constexpr size_t kMaxNameChars = PROCMON_MAX_NAME;
-constexpr size_t kMaxPathChars = PROCMON_MAX_PATH;
-constexpr const char* kEventLogDirectoryName = "procmon_events";
+constexpr size_t kMaxNameChars = PROCSENTINEL_MAX_NAME;
+constexpr size_t kMaxPathChars = PROCSENTINEL_MAX_PATH;
+constexpr const char* kEventLogDirectoryName = "procsentinel_events";
 
 enum class EventType : std::uint8_t {
-    Create = PROCMON_EVENT_CREATE,
-    Exit   = PROCMON_EVENT_EXIT,
-    State  = PROCMON_EVENT_STATE
+    Create = PROCSENTINEL_EVENT_CREATE,
+    Exit   = PROCSENTINEL_EVENT_EXIT,
+    State  = PROCSENTINEL_EVENT_STATE
 };
 
 enum class ProcessState : std::uint8_t {
-    Running   = PROCMON_STATE_RUNNING,
-    Exiting   = PROCMON_STATE_EXITING,
-    Zombie    = PROCMON_STATE_ZOMBIE,
-    Suspended = PROCMON_STATE_SUSPENDED
+    Running   = PROCSENTINEL_STATE_RUNNING,
+    Exiting   = PROCSENTINEL_STATE_EXITING,
+    Zombie    = PROCSENTINEL_STATE_ZOMBIE,
+    Suspended = PROCSENTINEL_STATE_SUSPENDED
 };
 
 using ::WireEvent;
@@ -126,4 +126,4 @@ struct Stats {
     }
 };
 
-} // namespace procmon
+} // namespace procsentinel

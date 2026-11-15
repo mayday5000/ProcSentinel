@@ -1,9 +1,9 @@
 /*
- * procmon_app.cpp
- * User-mode companion for the ProcMonDrv kernel driver.
+ * procsentinel_app.cpp
+ * User-mode companion for the ProcSentinelDrv kernel driver.
  *
  * Purpose:
- *   Open the control device (\\.\ProcMonDrv), issue METHOD_BUFFERED IOCTLs,
+ *   Open the control device (\\.\ProcSentinelDrv), issue METHOD_BUFFERED IOCTLs,
  *   and present process telemetry, live process lists, and memory dumps
  *   on an interactive console.
  *
@@ -17,7 +17,7 @@
  *      is owned by UniqueHandle and closed on destruction.
  *
  * Build (see scripts/Build-UserMode.ps1):
- *   cl /std:c++latest /EHsc /I..\shared /I. procmon_app.cpp /Fe:procmon_app.exe
+ *   cl /std:c++latest /EHsc /I..\shared /I. procsentinel_app.cpp /Fe:procsentinel_app.exe
  */
 
 
@@ -43,19 +43,19 @@
 #include <vector>
 
 namespace fs = std::filesystem;
-namespace procmon {
+namespace procsentinel {
 
 /* =============================================================================
  * IOCTL codes — must match the kernel driver exactly
  * ============================================================================= */
 
-constexpr DWORD IOCTL_PROCMON_GET_STATS        = CTL_CODE(FILE_DEVICE_UNKNOWN, 0xB00, METHOD_BUFFERED, FILE_ANY_ACCESS);
-constexpr DWORD IOCTL_PROCMON_GET_EVENTS       = CTL_CODE(FILE_DEVICE_UNKNOWN, 0xB01, METHOD_BUFFERED, FILE_ANY_ACCESS);
-constexpr DWORD IOCTL_PROCMON_START_MONITOR    = CTL_CODE(FILE_DEVICE_UNKNOWN, 0xB02, METHOD_BUFFERED, FILE_ANY_ACCESS);
-constexpr DWORD IOCTL_PROCMON_STOP_MONITOR     = CTL_CODE(FILE_DEVICE_UNKNOWN, 0xB03, METHOD_BUFFERED, FILE_ANY_ACCESS);
-constexpr DWORD IOCTL_PROCMON_RESET_STATS      = CTL_CODE(FILE_DEVICE_UNKNOWN, 0xB04, METHOD_BUFFERED, FILE_ANY_ACCESS);
-constexpr DWORD IOCTL_PROCMON_GET_PROCESS_LIST = CTL_CODE(FILE_DEVICE_UNKNOWN, 0xB05, METHOD_BUFFERED, FILE_ANY_ACCESS);
-constexpr DWORD IOCTL_PROCMON_DUMP_PROCESS     = CTL_CODE(FILE_DEVICE_UNKNOWN, 0xB06, METHOD_BUFFERED, FILE_ANY_ACCESS);
+constexpr DWORD IOCTL_PROCSENTINEL_GET_STATS        = CTL_CODE(FILE_DEVICE_UNKNOWN, 0xB00, METHOD_BUFFERED, FILE_ANY_ACCESS);
+constexpr DWORD IOCTL_PROCSENTINEL_GET_EVENTS       = CTL_CODE(FILE_DEVICE_UNKNOWN, 0xB01, METHOD_BUFFERED, FILE_ANY_ACCESS);
+constexpr DWORD IOCTL_PROCSENTINEL_START_MONITOR    = CTL_CODE(FILE_DEVICE_UNKNOWN, 0xB02, METHOD_BUFFERED, FILE_ANY_ACCESS);
+constexpr DWORD IOCTL_PROCSENTINEL_STOP_MONITOR     = CTL_CODE(FILE_DEVICE_UNKNOWN, 0xB03, METHOD_BUFFERED, FILE_ANY_ACCESS);
+constexpr DWORD IOCTL_PROCSENTINEL_RESET_STATS      = CTL_CODE(FILE_DEVICE_UNKNOWN, 0xB04, METHOD_BUFFERED, FILE_ANY_ACCESS);
+constexpr DWORD IOCTL_PROCSENTINEL_GET_PROCESS_LIST = CTL_CODE(FILE_DEVICE_UNKNOWN, 0xB05, METHOD_BUFFERED, FILE_ANY_ACCESS);
+constexpr DWORD IOCTL_PROCSENTINEL_DUMP_PROCESS     = CTL_CODE(FILE_DEVICE_UNKNOWN, 0xB06, METHOD_BUFFERED, FILE_ANY_ACCESS);
 
 /* =============================================================================
  * RAII HANDLE
@@ -118,7 +118,7 @@ public:
     [[nodiscard]] static std::expected<DriverClient, std::string> open()
     {
         HANDLE h = CreateFileA(
-            "\\\\.\\ProcMonDrv",
+            "\\\\.\\ProcSentinelDrv",
             GENERIC_READ | GENERIC_WRITE,
             FILE_SHARE_READ | FILE_SHARE_WRITE,
             nullptr,
@@ -129,10 +129,10 @@ public:
             const DWORD err = GetLastError();
             if (err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND) {
                 return std::unexpected(
-                    "Driver not loaded. Device \\\\.\\ProcMonDrv not found. "
+                    "Driver not loaded. Device \\\\.\\ProcSentinelDrv not found. "
                     "Run install script as Administrator first.");
             }
-            return std::unexpected(std::format("CreateFile(ProcMonDrv) failed: Win32 error {}", err));
+            return std::unexpected(std::format("CreateFile(ProcSentinelDrv) failed: Win32 error {}", err));
         }
         return DriverClient(UniqueHandle(h));
     }
@@ -141,7 +141,7 @@ public:
     {
         WireStats wire{};
         DWORD returned = 0;
-        if (!DeviceIoControl(handle_.get(), IOCTL_PROCMON_GET_STATS,
+        if (!DeviceIoControl(handle_.get(), IOCTL_PROCSENTINEL_GET_STATS,
                              nullptr, 0, &wire, sizeof(wire), &returned, nullptr)) {
             return std::unexpected(std::format("GET_STATS failed: Win32 error {}", GetLastError()));
         }
@@ -151,21 +151,21 @@ public:
     [[nodiscard]] bool startMonitor()
     {
         DWORD returned = 0;
-        return DeviceIoControl(handle_.get(), IOCTL_PROCMON_START_MONITOR,
+        return DeviceIoControl(handle_.get(), IOCTL_PROCSENTINEL_START_MONITOR,
                                nullptr, 0, nullptr, 0, &returned, nullptr) != FALSE;
     }
 
     [[nodiscard]] bool stopMonitor()
     {
         DWORD returned = 0;
-        return DeviceIoControl(handle_.get(), IOCTL_PROCMON_STOP_MONITOR,
+        return DeviceIoControl(handle_.get(), IOCTL_PROCSENTINEL_STOP_MONITOR,
                                nullptr, 0, nullptr, 0, &returned, nullptr) != FALSE;
     }
 
     [[nodiscard]] bool resetStats()
     {
         DWORD returned = 0;
-        return DeviceIoControl(handle_.get(), IOCTL_PROCMON_RESET_STATS,
+        return DeviceIoControl(handle_.get(), IOCTL_PROCSENTINEL_RESET_STATS,
                                nullptr, 0, nullptr, 0, &returned, nullptr) != FALSE;
     }
 
@@ -174,12 +174,12 @@ public:
         std::vector<Event> result;
         if (maxCount == 0) return result;
 
-        const std::size_t n = (std::min)(maxCount, static_cast<std::size_t>(PROCMON_MAX_EVENTS));
+        const std::size_t n = (std::min)(maxCount, static_cast<std::size_t>(PROCSENTINEL_MAX_EVENTS));
         std::vector<std::uint8_t> buffer(n * sizeof(WireEvent));
         std::span<std::uint8_t> out{buffer};
 
         DWORD returned = 0;
-        if (!DeviceIoControl(handle_.get(), IOCTL_PROCMON_GET_EVENTS,
+        if (!DeviceIoControl(handle_.get(), IOCTL_PROCSENTINEL_GET_EVENTS,
                              nullptr, 0,
                              out.data(), static_cast<DWORD>(out.size_bytes()),
                              &returned, nullptr)) {
@@ -200,7 +200,7 @@ public:
         std::vector<std::uint8_t> buffer(256 * 1024);
         std::span<std::uint8_t> out{buffer};
         DWORD returned = 0;
-        if (!DeviceIoControl(handle_.get(), IOCTL_PROCMON_GET_PROCESS_LIST,
+        if (!DeviceIoControl(handle_.get(), IOCTL_PROCSENTINEL_GET_PROCESS_LIST,
                              nullptr, 0,
                              out.data(), static_cast<DWORD>(out.size_bytes()),
                              &returned, nullptr)) {
@@ -221,17 +221,17 @@ public:
     [[nodiscard]] std::expected<std::size_t, std::string>
     dumpProcessByName(std::string_view name, const fs::path& outFile)
     {
-        if (name.empty() || name.size() >= PROCMON_MAX_NAME) {
+        if (name.empty() || name.size() >= PROCSENTINEL_MAX_NAME) {
             return std::unexpected("process name empty or too long");
         }
 
-        char nameBuf[PROCMON_MAX_NAME] = {};
+        char nameBuf[PROCSENTINEL_MAX_NAME] = {};
         std::memcpy(nameBuf, name.data(), name.size());
 
-        std::vector<std::uint8_t> dumpBuf(PROCMON_DUMP_MAX_SIZE);
+        std::vector<std::uint8_t> dumpBuf(PROCSENTINEL_DUMP_MAX_SIZE);
         std::span<std::uint8_t> out{dumpBuf};
         DWORD returned = 0;
-        if (!DeviceIoControl(handle_.get(), IOCTL_PROCMON_DUMP_PROCESS,
+        if (!DeviceIoControl(handle_.get(), IOCTL_PROCSENTINEL_DUMP_PROCESS,
                              nameBuf, static_cast<DWORD>(name.size() + 1),
                              out.data(), static_cast<DWORD>(out.size_bytes()),
                              &returned, nullptr)) {
@@ -364,7 +364,7 @@ void printProcessList(const std::vector<ProcInfo>& list)
 
 void printMenu()
 {
-    std::cout << "\n=== ProcessMonitor User Application ===\n"
+    std::cout << "\n=== ProcSentinel User Application ===\n"
               << "1. Show statistics\n"
               << "2. Start monitoring\n"
               << "3. Stop monitoring\n"
@@ -377,7 +377,7 @@ void printMenu()
               << "Choice: ";
 }
 
-} // namespace procmon
+} // namespace procsentinel
 
 /* =============================================================================
  * main
@@ -385,11 +385,11 @@ void printMenu()
 
 int main()
 {
-    using namespace procmon;
+    using namespace procsentinel;
 
-    std::cout << "=== ProcessMonitor (C++23) ===\n"
+    std::cout << "=== ProcSentinel (C++23) ===\n"
               << "Built: " << __DATE__ << ' ' << __TIME__ << '\n'
-              << "Requires ProcMonDrv kernel driver loaded.\n";
+              << "Requires ProcSentinelDrv kernel driver loaded.\n";
 
     auto opened = DriverClient::open();
     if (!opened) {
