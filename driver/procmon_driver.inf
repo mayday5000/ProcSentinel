@@ -1,0 +1,50 @@
+;
+; procmon_driver.inf
+; Installation information for ProcessMonitor_v2 (WDM control device)
+;
+
+[Version]
+Signature="$WINDOWS NT$"
+Class=System
+ClassGuid={4d36e97d-e325-11ce-bfc1-08002be10318}
+Provider=%ManufacturerName%
+DriverVer=08/04/2026,2.0.0.0
+CatalogFile=procmon_driver.cat
+PnpLockdown=1
+
+[DestinationDirs]
+DefaultDestDir = 13
+
+[SourceDisksNames]
+1 = %DiskName%,,,""
+
+[SourceDisksFiles]
+procmon_driver.sys = 1,,
+
+[Manufacturer]
+%ManufacturerName%=Standard,NT$ARCH$
+
+[Standard.NT$ARCH$]
+%ProcMon.DeviceDesc%=ProcMon_Device, Root\ProcMonDrv
+
+[ProcMon_Device.NT]
+CopyFiles=Drivers_Dir
+
+[Drivers_Dir]
+procmon_driver.sys
+
+[ProcMon_Device.NT.Services]
+AddService = ProcMonDrv,0x00000002,ProcMon_Service_Inst
+
+[ProcMon_Service_Inst]
+DisplayName    = %ProcMon.SVCDESC%
+ServiceType    = 1               ; SERVICE_KERNEL_DRIVER
+StartType      = 3               ; SERVICE_DEMAND_START
+ErrorControl   = 1               ; SERVICE_ERROR_NORMAL
+ServiceBinary  = %13%\procmon_driver.sys
+
+[Strings]
+ManufacturerName="ProcessMonitor Project"
+DiskName="ProcessMonitor_v2 Source Disk"
+ProcMon.DeviceDesc="Process Activity Monitor Driver"
+ProcMon.SVCDESC="Process Activity Monitor Service"

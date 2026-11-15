@@ -1,0 +1,15 @@
+# Visual Studio / WDK build output
+.vs/
+x64/
+x86/
+ARM64/
+Debug/
+Release/
+build/
+out/
+*.sys
+*.pdb
+*.obj
+*.cer
+*.cat
+*.user
