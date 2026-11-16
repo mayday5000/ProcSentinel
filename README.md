@@ -2,7 +2,7 @@
 
 **ProcSentinel** is a Windows kernel-mode (WDM) driver for process monitoring, PPL detection, and process memory image capture, paired with a C++23 user-mode client and host-side unit tests.
 
-The driver receives process create and exit events through `PsSetCreateProcessNotifyRoutineEx`, buffers them in a spinlock-protected NonPaged ring, and exposes a control device (`\\.\ProcSentinelDrv`) over `METHOD_BUFFERED` IOCTLs. From the client you can list live processes with their protected and PPL status, drain telemetry events to TSV logs, and capture up to 4 MB of a process's memory image by name.
+The driver receives process create and exit events through `PsSetCreateProcessNotifyRoutineEx`, buffers them in a spinlock-protected NonPaged ring, and exposes an admin-only control device (`\\.\ProcSentinelDrv`) over IOCTLs. From the client you can list live processes with their PP/PPL protection level, drain telemetry events to TSV logs, and capture up to 4 MB of a process's memory image by name or PID (protected processes are refused).
 
 **Author:** Damian Andres Ulanowicz
 
