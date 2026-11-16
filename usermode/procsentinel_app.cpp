@@ -3,21 +3,26 @@
  * User-mode companion for the ProcSentinelDrv kernel driver.
  *
  * Purpose:
- *   Open the control device (\\.\ProcSentinelDrv), issue METHOD_BUFFERED IOCTLs,
- *   and present process telemetry, live process lists, and memory dumps
- *   on an interactive console.
+ *   Open the control device (\\.\ProcSentinelDrv), issue IOCTLs (METHOD_BUFFERED,
+ *   DUMP uses METHOD_OUT_DIRECT), and present process telemetry, live process
+ *   lists, and memory dumps on an interactive console.
+ *
+ * Requirements:
+ *   - Elevated prompt: the device only admits SYSTEM and Administrators.
+ *   - SeDebugPrivilege is enabled at startup; the driver requires it for DUMP.
  *
  * How it works:
  *   1. DriverClient::open() creates a handle with CreateFileA.
  *   2. Menu commands map 1:1 to IOCTLs (GET_STATS, START/STOP, GET_EVENTS,
  *      GET_PROCESS_LIST, DUMP_PROCESS, RESET_STATS).
- *   3. Output buffers are wrapped in std::span; results are converted from
- *      the packed wire structs in shared_protocol.h into domain types.
+ *   3. Output buffers are wrapped in std::span and parsed with the helpers in
+ *      types.h (parseEvents / parseProcessList / parseDump), which the host
+ *      tests exercise too.
  *   4. Errors are returned as std::expected and printed; the device handle
  *      is owned by UniqueHandle and closed on destruction.
  *
  * Build (see scripts/Build-UserMode.ps1):
- *   cl /std:c++latest /EHsc /I..\shared /I. procsentinel_app.cpp /Fe:procsentinel_app.exe
+ *   cl /std:c++latest /EHsc /I..\shared /I. procsentinel_app.cpp advapi32.lib /Fe:procsentinel_app.exe
  */
 
 
@@ -28,7 +33,10 @@
 
 #include <conio.h>
 
+#include <algorithm>
 #include <cstdint>
+#include <cstring>
+#include <exception>
 #include <expected>
 #include <filesystem>
 #include <format>
@@ -37,6 +45,7 @@
 #include <iomanip>
 #include <optional>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -46,16 +55,49 @@ namespace fs = std::filesystem;
 namespace procsentinel {
 
 /* =============================================================================
- * IOCTL codes — must match the kernel driver exactly
+ * IOCTL codes come from shared_protocol.h; make sure the portable formula
+ * matches the Windows CTL_CODE macro exactly.
  * ============================================================================= */
 
-constexpr DWORD IOCTL_PROCSENTINEL_GET_STATS        = CTL_CODE(FILE_DEVICE_UNKNOWN, 0xB00, METHOD_BUFFERED, FILE_ANY_ACCESS);
-constexpr DWORD IOCTL_PROCSENTINEL_GET_EVENTS       = CTL_CODE(FILE_DEVICE_UNKNOWN, 0xB01, METHOD_BUFFERED, FILE_ANY_ACCESS);
-constexpr DWORD IOCTL_PROCSENTINEL_START_MONITOR    = CTL_CODE(FILE_DEVICE_UNKNOWN, 0xB02, METHOD_BUFFERED, FILE_ANY_ACCESS);
-constexpr DWORD IOCTL_PROCSENTINEL_STOP_MONITOR     = CTL_CODE(FILE_DEVICE_UNKNOWN, 0xB03, METHOD_BUFFERED, FILE_ANY_ACCESS);
-constexpr DWORD IOCTL_PROCSENTINEL_RESET_STATS      = CTL_CODE(FILE_DEVICE_UNKNOWN, 0xB04, METHOD_BUFFERED, FILE_ANY_ACCESS);
-constexpr DWORD IOCTL_PROCSENTINEL_GET_PROCESS_LIST = CTL_CODE(FILE_DEVICE_UNKNOWN, 0xB05, METHOD_BUFFERED, FILE_ANY_ACCESS);
-constexpr DWORD IOCTL_PROCSENTINEL_DUMP_PROCESS     = CTL_CODE(FILE_DEVICE_UNKNOWN, 0xB06, METHOD_BUFFERED, FILE_ANY_ACCESS);
+static_assert(IOCTL_PROCSENTINEL_GET_STATS        == CTL_CODE(FILE_DEVICE_UNKNOWN, 0xB00, METHOD_BUFFERED,   FILE_READ_DATA));
+static_assert(IOCTL_PROCSENTINEL_GET_EVENTS       == CTL_CODE(FILE_DEVICE_UNKNOWN, 0xB01, METHOD_BUFFERED,   FILE_READ_DATA));
+static_assert(IOCTL_PROCSENTINEL_START_MONITOR    == CTL_CODE(FILE_DEVICE_UNKNOWN, 0xB02, METHOD_BUFFERED,   FILE_WRITE_DATA));
+static_assert(IOCTL_PROCSENTINEL_STOP_MONITOR     == CTL_CODE(FILE_DEVICE_UNKNOWN, 0xB03, METHOD_BUFFERED,   FILE_WRITE_DATA));
+static_assert(IOCTL_PROCSENTINEL_RESET_STATS      == CTL_CODE(FILE_DEVICE_UNKNOWN, 0xB04, METHOD_BUFFERED,   FILE_WRITE_DATA));
+static_assert(IOCTL_PROCSENTINEL_GET_PROCESS_LIST == CTL_CODE(FILE_DEVICE_UNKNOWN, 0xB05, METHOD_BUFFERED,   FILE_READ_DATA));
+static_assert(IOCTL_PROCSENTINEL_DUMP_PROCESS     == CTL_CODE(FILE_DEVICE_UNKNOWN, 0xB06, METHOD_OUT_DIRECT, FILE_READ_DATA | FILE_WRITE_DATA));
+
+/* =============================================================================
+ * SeDebugPrivilege — the driver requires it (enabled) for DUMP_PROCESS.
+ * Elevated administrators hold it, but it is disabled by default.
+ * ============================================================================= */
+
+[[nodiscard]] inline bool enableDebugPrivilege(std::string& error)
+{
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &token)) {
+        error = std::format("OpenProcessToken failed: Win32 error {}", GetLastError());
+        return false;
+    }
+    TOKEN_PRIVILEGES tp{};
+    tp.PrivilegeCount = 1;
+    tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
+    bool ok = LookupPrivilegeValueW(nullptr, L"SeDebugPrivilege", &tp.Privileges[0].Luid) != FALSE;
+    if (!ok) {
+        error = std::format("LookupPrivilegeValue failed: Win32 error {}", GetLastError());
+    } else {
+        ok = AdjustTokenPrivileges(token, FALSE, &tp, sizeof(tp), nullptr, nullptr) != FALSE;
+        const DWORD err = GetLastError();
+        if (!ok) {
+            error = std::format("AdjustTokenPrivileges failed: Win32 error {}", err);
+        } else if (err == ERROR_NOT_ALL_ASSIGNED) {
+            ok = false;
+            error = "SeDebugPrivilege is not held by this token (run elevated as Administrator)";
+        }
+    }
+    CloseHandle(token);
+    return ok;
+}
 
 /* =============================================================================
  * RAII HANDLE
@@ -132,6 +174,11 @@ public:
                     "Driver not loaded. Device \\\\.\\ProcSentinelDrv not found. "
                     "Run install script as Administrator first.");
             }
+            if (err == ERROR_ACCESS_DENIED) {
+                return std::unexpected(
+                    "Access denied opening \\\\.\\ProcSentinelDrv. The device only admits "
+                    "SYSTEM and elevated Administrators: run this client from an elevated prompt.");
+            }
             return std::unexpected(std::format("CreateFile(ProcSentinelDrv) failed: Win32 error {}", err));
         }
         return DriverClient(UniqueHandle(h));
@@ -169,10 +216,9 @@ public:
                                nullptr, 0, nullptr, 0, &returned, nullptr) != FALSE;
     }
 
-    [[nodiscard]] std::expected<std::vector<Event>, std::string> getEvents(std::size_t maxCount = 512)
+    [[nodiscard]] std::expected<std::vector<Event>, std::string> getEvents(std::size_t maxCount = PROCSENTINEL_MAX_EVENTS)
     {
-        std::vector<Event> result;
-        if (maxCount == 0) return result;
+        if (maxCount == 0) return std::vector<Event>{};
 
         const std::size_t n = (std::min)(maxCount, static_cast<std::size_t>(PROCSENTINEL_MAX_EVENTS));
         std::vector<std::uint8_t> buffer(n * sizeof(WireEvent));
@@ -185,19 +231,13 @@ public:
                              &returned, nullptr)) {
             return std::unexpected(std::format("GET_EVENTS failed: Win32 error {}", GetLastError()));
         }
-        const std::size_t count = returned / sizeof(WireEvent);
-        std::span<const WireEvent> events{
-            reinterpret_cast<const WireEvent*>(out.data()), count};
-        result.reserve(events.size());
-        for (const auto& e : events) {
-            result.push_back(Event::fromWire(e));
-        }
-        return result;
+        return parseEvents(std::span<const std::uint8_t>{out.data(), (std::min)(static_cast<std::size_t>(returned), out.size())});
     }
 
+    /* The driver returns at most PROCSENTINEL_MAX_PROCESS_LIST entries. */
     [[nodiscard]] std::expected<std::vector<ProcInfo>, std::string> getProcessList()
     {
-        std::vector<std::uint8_t> buffer(256 * 1024);
+        std::vector<std::uint8_t> buffer(PROCSENTINEL_MAX_PROCESS_LIST * sizeof(WireProcInfo));
         std::span<std::uint8_t> out{buffer};
         DWORD returned = 0;
         if (!DeviceIoControl(handle_.get(), IOCTL_PROCSENTINEL_GET_PROCESS_LIST,
@@ -206,52 +246,59 @@ public:
                              &returned, nullptr)) {
             return std::unexpected(std::format("GET_PROCESS_LIST failed: Win32 error {}", GetLastError()));
         }
-        const std::size_t count = returned / sizeof(WireProcInfo);
-        std::span<const WireProcInfo> list{
-            reinterpret_cast<const WireProcInfo*>(out.data()), count};
-        std::vector<ProcInfo> result;
-        result.reserve(list.size());
-        for (const auto& p : list) {
-            result.push_back(ProcInfo::fromWire(p));
-        }
-        return result;
+        return parseProcessList(std::span<const std::uint8_t>{out.data(), (std::min)(static_cast<std::size_t>(returned), out.size())});
     }
 
-    /* Returns number of bytes written to outFile, or unexpected on failure */
-    [[nodiscard]] std::expected<std::size_t, std::string>
-    dumpProcessByName(std::string_view name, const fs::path& outFile)
+    /* Dump by PID (pid != 0) or by short name. Writes only the image bytes
+     * (not the protocol header) to outFile. */
+    [[nodiscard]] std::expected<DumpInfo, std::string>
+    dumpProcess(std::uint32_t pid, std::string_view name, const fs::path& outFile)
     {
-        if (name.empty() || name.size() >= PROCSENTINEL_MAX_NAME) {
-            return std::unexpected("process name empty or too long");
+        if (pid == 0 && name.empty()) {
+            return std::unexpected("process name or PID required");
         }
+        const WireDumpRequest request = makeDumpRequest(pid, name);
 
-        char nameBuf[PROCSENTINEL_MAX_NAME] = {};
-        std::memcpy(nameBuf, name.data(), name.size());
-
-        std::vector<std::uint8_t> dumpBuf(PROCSENTINEL_DUMP_MAX_SIZE);
-        std::span<std::uint8_t> out{dumpBuf};
+        dumpBuf_.assign(PROCSENTINEL_DUMP_BUFFER_SIZE, 0);
         DWORD returned = 0;
         if (!DeviceIoControl(handle_.get(), IOCTL_PROCSENTINEL_DUMP_PROCESS,
-                             nameBuf, static_cast<DWORD>(name.size() + 1),
-                             out.data(), static_cast<DWORD>(out.size_bytes()),
+                             const_cast<WireDumpRequest*>(&request), static_cast<DWORD>(sizeof(request)),
+                             dumpBuf_.data(), static_cast<DWORD>(dumpBuf_.size()),
                              &returned, nullptr)) {
-            return std::unexpected(std::format("DUMP_PROCESS failed: Win32 error {}", GetLastError()));
-        }
-        if (returned == 0) {
-            return std::unexpected("DUMP_PROCESS returned 0 bytes");
+            const DWORD err = GetLastError();
+            std::string hint;
+            switch (err) {
+            case ERROR_PRIVILEGE_NOT_HELD: hint = " (SeDebugPrivilege not enabled)"; break;
+            case ERROR_ACCESS_DENIED:      hint = " (target is a protected PP/PPL process)"; break;
+            case ERROR_NOT_FOUND:          hint = " (no process with that name/PID)"; break;
+            default: break;
+            }
+            return std::unexpected(std::format("DUMP_PROCESS failed: Win32 error {}{}", err, hint));
         }
 
-        std::ofstream ofs(outFile, std::ios::binary);
+        auto parsed = parseDump(std::span<const std::uint8_t>{
+            dumpBuf_.data(), (std::min)(static_cast<std::size_t>(returned), dumpBuf_.size())});
+        if (!parsed) {
+            return std::unexpected(parsed.error());
+        }
+
+        std::ofstream ofs(outFile, std::ios::binary | std::ios::trunc);
         if (!ofs) {
             return std::unexpected(std::format("cannot open output file {}", outFile.string()));
         }
-        ofs.write(reinterpret_cast<const char*>(out.data()), returned);
-        return static_cast<std::size_t>(returned);
+        ofs.write(reinterpret_cast<const char*>(parsed->data.data()),
+                  static_cast<std::streamsize>(parsed->data.size()));
+        ofs.close();
+        if (!ofs) {
+            return std::unexpected(std::format("failed writing {}", outFile.string()));
+        }
+        return parsed;
     }
 
 private:
     explicit DriverClient(UniqueHandle handle) : handle_(std::move(handle)) {}
     UniqueHandle handle_;
+    std::vector<std::uint8_t> dumpBuf_;   // header + up to PROCSENTINEL_DUMP_MAX_SIZE
 };
 
 /* =============================================================================
@@ -303,8 +350,8 @@ void printStats(const Stats& s)
     std::cout << "\n=== STATISTICS ===\n"
               << "Creates             : " << s.creates << '\n'
               << "Exits               : " << s.exits << '\n'
-              << "StateChanges        : " << s.stateChanges << '\n'
-              << "CurrentProcessCount : " << s.currentProcessCount << '\n'
+              << "StateChanges        : " << s.stateChanges << "  (reserved)\n"
+              << "CurrentProcessCount : " << s.currentProcessCount << "  (seeded on START)\n"
               << "Events in ring      : " << s.eventCount << '\n'
               << "Dropped events      : " << s.droppedEvents << '\n'
               << "Dump requests       : " << s.dumpRequests << '\n'
@@ -344,22 +391,27 @@ void printProcessList(const std::vector<ProcInfo>& list)
     std::cout << std::left
               << std::setw(12) << "PID"
               << std::setw(12) << "PARENT"
-              << std::setw(10) << "PROTECTED"
+              << std::setw(11) << "PROTECTION"
               << std::setw(10) << "STATE"
               << "NAME\n"
-              << std::string(64, '-') << '\n';
-    std::size_t protectedCount = 0;
+              << std::string(65, '-') << '\n';
+    std::size_t ppCount = 0;
+    std::size_t pplCount = 0;
     for (const auto& p : list) {
         std::cout << std::left
                   << std::setw(12) << p.pid
                   << std::setw(12) << p.parentPid
-                  << std::setw(10) << (p.protectedProcess ? "YES" : "NO")
+                  << std::setw(11) << toString(p.protection)
                   << std::setw(10) << toString(p.state)
                   << p.imageName << '\n';
-        if (p.protectedProcess) ++protectedCount;
+        if (p.protection == Protection::PP) ++ppCount;
+        if (p.protection == Protection::PPL) ++pplCount;
     }
-    std::cout << "\n[SUMMARY] Protected processes: " << protectedCount
-              << " / " << list.size() << '\n';
+    std::cout << "\n[SUMMARY] Protected processes: " << (ppCount + pplCount)
+              << " / " << list.size() << "  (PP: " << ppCount << ", PPL: " << pplCount << ")\n";
+    if (list.size() >= PROCSENTINEL_MAX_PROCESS_LIST) {
+        std::cout << "[NOTE] List capped at " << PROCSENTINEL_MAX_PROCESS_LIST << " entries.\n";
+    }
 }
 
 void printMenu()
@@ -369,12 +421,29 @@ void printMenu()
               << "2. Start monitoring\n"
               << "3. Stop monitoring\n"
               << "4. Reset stats / clear event ring\n"
-              << "5. View telemetry events (create/exit)\n"
+              << "5. Drain and view telemetry events (create/exit)\n"
               << "6. Show live process list\n"
-              << "7. Dump process memory by name\n"
+              << "7. Dump process image (by name or PID)\n"
               << "8. Drain events + append to event log\n"
               << "0. Exit\n"
               << "Choice: ";
+}
+
+/* Read a whole line (paths may contain spaces). Trims surrounding blanks. */
+std::string readLine(std::string_view prompt)
+{
+    std::cout << prompt;
+    std::string line;
+    std::getline(std::cin, line);
+    const auto first = line.find_first_not_of(" \t\r\n\"");
+    if (first == std::string::npos) return {};
+    const auto last = line.find_last_not_of(" \t\r\n\"");
+    return line.substr(first, last - first + 1);
+}
+
+bool isAllDigits(std::string_view s)
+{
+    return !s.empty() && std::all_of(s.begin(), s.end(), [](char c) { return c >= '0' && c <= '9'; });
 }
 
 } // namespace procsentinel
@@ -389,7 +458,12 @@ int main()
 
     std::cout << "=== ProcSentinel (C++23) ===\n"
               << "Built: " << __DATE__ << ' ' << __TIME__ << '\n'
-              << "Requires ProcSentinelDrv kernel driver loaded.\n";
+              << "Requires ProcSentinelDrv kernel driver loaded and an elevated prompt.\n";
+
+    std::string privError;
+    if (!enableDebugPrivilege(privError)) {
+        std::cerr << "[WARNING] " << privError << ". Option 7 (dump) will be refused by the driver.\n";
+    }
 
     auto opened = DriverClient::open();
     if (!opened) {
@@ -404,10 +478,15 @@ int main()
     while (choice != 0) {
         printMenu();
         if (!(std::cin >> choice)) {
+            if (std::cin.eof()) break;
             std::cin.clear();
             std::string discard;
             std::getline(std::cin, discard);
             continue;
+        }
+        {
+            std::string rest;   // consume the rest of the menu line
+            std::getline(std::cin, rest);
         }
 
         switch (choice) {
@@ -445,23 +524,57 @@ int main()
             auto list = client.getProcessList();
             if (list) printProcessList(*list);
             else std::cerr << "[ERROR] " << list.error() << '\n';
-            std::cout << "\nEnter process short name (e.g. notepad.exe): ";
+
+            const std::string target =
+                readLine("\nEnter PID or process short name (e.g. 1234 or notepad.exe): ");
+            if (target.empty()) {
+                std::cerr << "[ERROR] no target given\n";
+                break;
+            }
+            std::uint32_t pid = 0;
             std::string name;
-            std::cin >> name;
-            std::cout << "Enter output file path: ";
-            std::string outPath;
-            std::cin >> outPath;
-            auto dumped = client.dumpProcessByName(name, outPath);
+            if (isAllDigits(target)) {
+                try {
+                    const unsigned long v = std::stoul(target);
+                    if (v == 0 || v > 0xFFFFFFFFul) throw std::out_of_range("pid");
+                    pid = static_cast<std::uint32_t>(v);
+                } catch (const std::exception&) {
+                    std::cerr << "[ERROR] invalid PID\n";
+                    break;
+                }
+            } else {
+                name = target;
+                if (name.size() >= PROCSENTINEL_MAX_NAME) {
+                    std::cout << "[NOTE] Name longer than " << (PROCSENTINEL_MAX_NAME - 1)
+                              << " chars; the driver matches on the truncated kernel short name.\n";
+                }
+            }
+            const std::string outPath = readLine("Enter output file path: ");
+            if (outPath.empty()) {
+                std::cerr << "[ERROR] no output path given\n";
+                break;
+            }
+
+            auto dumped = client.dumpProcess(pid, name, fs::path(outPath));
             if (dumped) {
-                std::cout << "[SUCCESS] Dumped " << *dumped << " bytes of '" << name
-                          << "' to " << outPath << '\n';
+                std::cout << std::format("[SUCCESS] Dumped {} bytes of PID {} (ImageBase 0x{:X}, SizeOfImage {}) to {}\n",
+                                         dumped->data.size(), dumped->pid, dumped->imageBase,
+                                         dumped->sizeOfImage, outPath);
+                if (dumped->truncated) {
+                    std::cout << std::format("[WARNING] Truncated: SizeOfImage {} exceeds the {} byte cap.\n",
+                                             dumped->sizeOfImage, PROCSENTINEL_DUMP_MAX_SIZE);
+                }
+                if (dumped->partial) {
+                    std::cout << std::format("[WARNING] Partial: {} unreadable page(s) were zero-filled.\n",
+                                             dumped->unreadablePages);
+                }
             } else {
                 std::cerr << "[ERROR] " << dumped.error() << '\n';
             }
             break;
         }
         case 8: {
-            auto events = client.getEvents(1024);
+            auto events = client.getEvents();
             if (events) {
                 eventLog.appendBatch(*events);
                 std::cout << "[OK] Appended " << events->size()

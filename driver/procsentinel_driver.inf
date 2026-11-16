@@ -1,6 +1,6 @@
 ;
 ; procsentinel_driver.inf
-; Installation information for ProcSentinel_v2 (WDM control device)
+; Installation information for ProcSentinel (WDM control device)
 ;
 
 [Version]
@@ -45,6 +45,6 @@ ServiceBinary  = %13%\procsentinel_driver.sys
 
 [Strings]
 ManufacturerName="ProcSentinel Project"
-DiskName="ProcSentinel_v2 Source Disk"
+DiskName="ProcSentinel Source Disk"
 ProcSentinel.DeviceDesc="Process Activity Monitor Driver"
 ProcSentinel.SVCDESC="Process Activity Monitor Service"
