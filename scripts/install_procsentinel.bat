@@ -5,16 +5,27 @@ setlocal enabledelayedexpansion
 :: install_procsentinel.bat
 :: Same logic as install_procsentinel.ps1
 :: WDM kernel service (sc create type= kernel)
+:: Paths are relative to this script (%~dp0), so it also works from
+:: "Run as administrator" (which starts in C:\Windows\System32).
 :: ================================================
+
+:: 0. Require an elevated prompt
+net session >nul 2>&1
+if errorlevel 1 (
+    echo [ERROR] Run this script from an elevated ^(Administrator^) prompt.
+    pause
+    exit /b 1
+)
 
 set "serviceName=ProcSentinelDrv"
 set "sysModuleName=procsentinel_driver.sys"
 set "pdbModuleName=procsentinel_driver.pdb"
 set "displayName=Process Activity Monitor Driver"
-set "targetSys=C:\Windows\System32\drivers\%sysModuleName%"
-set "targetPdb=C:\Windows\System32\drivers\%pdbModuleName%"
+set "targetSys=%SystemRoot%\System32\drivers\%sysModuleName%"
+set "targetPdb=%SystemRoot%\System32\drivers\%pdbModuleName%"
+set "scriptDir=%~dp0"
 
-set "relativeDriverPath=..\driver\x64\Debug"
+set "relativeDriverPath=%scriptDir%..\driver\x64\Debug"
 set "sourceSys=%relativeDriverPath%\%sysModuleName%"
 set "sourcePdb=%relativeDriverPath%\%pdbModuleName%"
 
@@ -27,11 +38,11 @@ echo.
 
 :: 1. Locate binary
 if exist "%sourceSys%" goto :found
-set "relativeDriverPath=..\driver\x64\Release"
+set "relativeDriverPath=%scriptDir%..\driver\x64\Release"
 set "sourceSys=%relativeDriverPath%\%sysModuleName%"
 set "sourcePdb=%relativeDriverPath%\%pdbModuleName%"
 if exist "%sourceSys%" goto :found
-set "relativeDriverPath=..\driver"
+set "relativeDriverPath=%scriptDir%..\driver"
 set "sourceSys=%relativeDriverPath%\%sysModuleName%"
 set "sourcePdb=%relativeDriverPath%\%pdbModuleName%"
 if exist "%sourceSys%" goto :found
@@ -88,6 +99,8 @@ if errorlevel 1 (
     echo Common causes:
     echo   - Driver is unsigned         -^> rebuild with test-signing
     echo   - Test-signing not enabled   -^> bcdedit /set testsigning on  ^(reboot^)
+    echo   - Access denied ^(5^)          -^> driver not linked with /INTEGRITYCHECK
+    echo   - Windows older than 10 2004 -^> ExAllocatePool2 import cannot be resolved
     echo   - Check Event Viewer -^> System
     echo.
     pause
@@ -104,7 +117,7 @@ echo.
 
 echo ================================================
 echo   INSTALLATION COMPLETE
-echo   Run procsentinel_app.exe as Administrator.
+echo   Run procsentinel_app.exe from an elevated prompt.
 echo ================================================
 echo.
 pause

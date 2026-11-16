@@ -30,8 +30,9 @@ $serviceName   = "ProcSentinelDrv"
 $sysModuleName = "procsentinel_driver.sys"
 $pdbModuleName = "procsentinel_driver.pdb"
 $displayName   = "Process Activity Monitor Driver"
-$targetSys     = "C:\Windows\System32\drivers\$sysModuleName"
-$targetPdb     = "C:\Windows\System32\drivers\$pdbModuleName"
+$driversDir    = Join-Path $env:SystemRoot "System32\drivers"
+$targetSys     = Join-Path $driversDir $sysModuleName
+$targetPdb     = Join-Path $driversDir $pdbModuleName
 $svcKey        = "HKLM:\SYSTEM\CurrentControlSet\Services\$serviceName"
 
 Write-Host ""
@@ -120,6 +121,9 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host "Common causes:" -ForegroundColor Yellow
     Write-Host "  - Driver is unsigned         -> rebuild with test-signing / SignMode=TestSign"
     Write-Host "  - Test-signing not enabled   -> bcdedit /set testsigning on  (reboot)"
+    Write-Host "  - Access denied (5)          -> driver not linked with /INTEGRITYCHECK, so"
+    Write-Host "                                  PsSetCreateProcessNotifyRoutineEx was refused"
+    Write-Host "  - Windows older than 10 2004 -> ExAllocatePool2 import cannot be resolved"
     Write-Host "  - Check Event Viewer -> System (Service Control Manager)"
     Write-Host ""
     exit 1
@@ -137,5 +141,6 @@ Write-Host ""
 
 Write-Host "================================================" -ForegroundColor Green
 Write-Host "  INSTALLATION COMPLETE" -ForegroundColor Green
-Write-Host "  Run procsentinel_app.exe as Administrator." -ForegroundColor Green
+Write-Host "  Run procsentinel_app.exe from an elevated prompt" -ForegroundColor Green
+Write-Host "  (the device only admits SYSTEM and Administrators)." -ForegroundColor Green
 Write-Host "================================================" -ForegroundColor Green

@@ -6,11 +6,13 @@
 # After a successful build the script also generates:
 #   - driver\debug.wds
 #   - driver\WinDbgWorkspace.xml
-#   - scripts\KDNet-ProcSentinelDrv.ps1   (interactive Port + Key)
+#   - scripts\KDNet-ProcSentinelDrv.ps1   (Port + Key: parameters or prompt)
 #
 # Requirements:
 #   - Visual Studio 2019 / 2022 with "Desktop development with C++"
 #   - Windows Driver Kit (WDK) matching the Windows SDK version
+#     (10.0.19041 / Windows 10 2004 or newer: the driver uses ExAllocatePool2)
+#   - The project links with /INTEGRITYCHECK and wdmsec.lib (set in the vcxproj)
 #   - A Visual Studio project (*.vcxproj / *.sln) created from the
 #     official "Empty WDM Driver" template, with the source replaced by
 #     driver\procsentinel_driver.c  OR  an existing solution that
@@ -20,6 +22,10 @@
 #   .\Build-Driver.ps1
 #   .\Build-Driver.ps1 -Configuration Release -Platform x64
 #   .\Build-Driver.ps1 -Clean
+#   .\Build-Driver.ps1 -KdnetPort 50008 -KdnetKey a.b.c.d -KdnetHostIp 192.168.1.10
+#
+# If -KdnetPort / -KdnetKey / -KdnetHostIp are omitted you are prompted
+# (press Enter to accept the default shown).
 # ================================================
 
 [CmdletBinding()]
@@ -27,10 +33,16 @@ param(
     [ValidateSet("Debug", "Release")]
     [string]$Configuration = "Debug",
 
-    [ValidateSet("x64", "ARM64")]
+    # The vcxproj only defines x64 configurations.
+    [ValidateSet("x64")]
     [string]$Platform = "x64",
 
-    [switch]$Clean
+    [switch]$Clean,
+
+    # KDNET settings written into WinDbgWorkspace.xml / the KDNet launcher.
+    [string]$KdnetPort,
+    [string]$KdnetKey,
+    [string]$KdnetHostIp
 )
 
 $ErrorActionPreference = "Stop"
@@ -137,42 +149,28 @@ $msbuildArgs = @(
 & $msbuildPath @msbuildArgs
 $msbuildExit = $LASTEXITCODE
 if ($msbuildExit -ne 0) {
-    # Soft-fail: if the .sys was still produced, continue with artifact generation
-    $maybeSys = Get-ChildItem -Path $DriverDir -Recurse -Filter $sysModuleName -ErrorAction SilentlyContinue |
-                Select-Object -First 1
-    if ($maybeSys) {
-        Write-Host ""
-        Write-Host "[WARNING] MSBuild exited with code $msbuildExit but $sysModuleName was produced:" -ForegroundColor Yellow
-        Write-Host "          $($maybeSys.FullName)" -ForegroundColor Yellow
-        Write-Host "          Continuing with debug-script generation..." -ForegroundColor Yellow
-    } else {
-        Write-Error "MSBuild failed with exit code $msbuildExit and no .sys was found."
-        exit $msbuildExit
-    }
+    # Never continue with a stale binary from an earlier build.
+    Write-Error "MSBuild failed with exit code $msbuildExit."
+    exit $msbuildExit
 }
 
 # ------------------------------------------------
-# 5. Locate the produced .sys
+# 5. Locate the produced .sys (only this configuration's output folder)
 # ------------------------------------------------
 $sysSearch = Join-Path $DriverDir "$Platform\$Configuration"
-$sysFile = Get-ChildItem -Path $sysSearch -Filter "*.sys" -ErrorAction SilentlyContinue |
-           Select-Object -First 1
+$sysPath   = Join-Path $sysSearch $sysModuleName
+$sysFile   = Get-Item -Path $sysPath -ErrorAction SilentlyContinue
 
 if (-not $sysFile) {
-    $sysFile = Get-ChildItem -Path $DriverDir -Recurse -Filter $sysModuleName -ErrorAction SilentlyContinue |
-               Select-Object -First 1
+    Write-Error "MSBuild reported success but $sysPath was not found."
+    exit 1
 }
 
-if ($sysFile) {
-    Write-Host ""
-    Write-Host "================================================" -ForegroundColor Green
-    Write-Host "  BUILD SUCCESSFUL" -ForegroundColor Green
-    Write-Host "  Driver : $($sysFile.FullName)" -ForegroundColor Green
-    Write-Host "================================================" -ForegroundColor Green
-} else {
-    Write-Warning "Build succeeded but .sys file was not found under $sysSearch"
-    Write-Host "Continuing with debug-script generation using expected paths..."
-}
+Write-Host ""
+Write-Host "================================================" -ForegroundColor Green
+Write-Host "  BUILD SUCCESSFUL" -ForegroundColor Green
+Write-Host "  Driver : $($sysFile.FullName)" -ForegroundColor Green
+Write-Host "================================================" -ForegroundColor Green
 
 # ================================================================
 # 6. Generate debug.wds
@@ -229,7 +227,7 @@ $workspaceXml = @"
   <Setting Name="0f950c2a-981e-4c10-baca-217f98fac022.Value.Width" Value="764" />
   <Setting Name="Breakpoints.LocationWidth" Value="516" />
   <Setting Name="EulaState" Value="accepted" />
-  <Setting Name="KernelConnect.Target" Value="192.168.223.1" />
+  <Setting Name="KernelConnect.Target" Value="__KDNET_HOST_IP__" />
   <Setting Name="KernelConnect.InitialBreak" Value="True" />
   <Setting Name="KernelConnect.Port" Value="__KDNET_PORT__" />
   <XmlSetting Name="WindowPreferences">
@@ -393,22 +391,29 @@ Write-Host "[OK] WinDbgWorkspace.xml written to: $workspacePath" -ForegroundColo
 # ================================================================
 Write-Host "Generating KDNet automation script..." -ForegroundColor Cyan
 
-# Ask for Port and Key
-$defaultPort = "50008"
-$defaultKey  = "1.2.3.4"
+# Port / Key / host IP: take the parameters, otherwise prompt with defaults.
+# The default key is a placeholder; use the key printed by "kdnet.exe" on the target.
+$defaultPort   = "50008"
+$defaultKey    = "1.2.3.4"
+$defaultHostIp = "192.168.223.1"
 
-$portInput = Read-Host "Enter KDNET Port [$defaultPort]"
-if ([string]::IsNullOrWhiteSpace($portInput)) { $portInput = $defaultPort }
+function Get-KdnetValue([string]$Value, [string]$Prompt, [string]$Default) {
+    if (-not [string]::IsNullOrWhiteSpace($Value)) { return $Value }
+    $answer = Read-Host "$Prompt [$Default]"
+    if ([string]::IsNullOrWhiteSpace($answer)) { return $Default }
+    return $answer
+}
 
-$keyInput = Read-Host "Enter KDNET Key  [$defaultKey]"
-if ([string]::IsNullOrWhiteSpace($keyInput)) { $keyInput = $defaultKey }
+$portInput   = Get-KdnetValue $KdnetPort   "Enter KDNET Port"    $defaultPort
+$keyInput    = Get-KdnetValue $KdnetKey    "Enter KDNET Key "    $defaultKey
+$hostIpInput = Get-KdnetValue $KdnetHostIp "Enter KDNET host IP" $defaultHostIp
 
-Write-Host "Using Port=$portInput  Key=$keyInput" -ForegroundColor Yellow
+Write-Host "Using Port=$portInput  Key=$keyInput  HostIp=$hostIpInput" -ForegroundColor Yellow
 
-# Patch the workspace XML with the real Port / Key
-$workspaceXml = $workspaceXml.Replace("__KDNET_PORT__", $portInput).Replace("__KDNET_KEY__", $keyInput)
+# Patch the workspace XML with the real Port / Key / host IP
+$workspaceXml = $workspaceXml.Replace("__KDNET_PORT__", $portInput).Replace("__KDNET_KEY__", $keyInput).Replace("__KDNET_HOST_IP__", $hostIpInput)
 [System.IO.File]::WriteAllText($workspacePath, $workspaceXml, $utf8NoBom)
-Write-Host "[OK] WinDbgWorkspace.xml updated with Port/Key" -ForegroundColor Green
+Write-Host "[OK] WinDbgWorkspace.xml updated with Port/Key/HostIp" -ForegroundColor Green
 
 # Build the KDNet launcher script name: KDNet- + $driverName + .ps1
 $kdnetScriptName = "KDNet-$driverName.ps1"

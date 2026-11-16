@@ -3,6 +3,14 @@ setlocal
 set "serviceName=ProcSentinelDrv"
 set "sysModuleName=procsentinel_driver.sys"
 set "pdbModuleName=procsentinel_driver.pdb"
+set "driversDir=%SystemRoot%\System32\drivers"
+
+net session >nul 2>&1
+if errorlevel 1 (
+    echo [ERROR] Run this script from an elevated ^(Administrator^) prompt.
+    pause
+    exit /b 1
+)
 
 echo.
 echo ================================================
@@ -21,16 +29,16 @@ timeout /t 1 /nobreak >nul
 echo [*] Removing registry...
 reg delete "HKLM\SYSTEM\CurrentControlSet\Services\%serviceName%" /f >nul 2>&1
 
-if exist "C:\Windows\System32\drivers\%sysModuleName%" (
-    del /f "C:\Windows\System32\drivers\%sysModuleName%" 2>nul
-    if exist "C:\Windows\System32\drivers\%sysModuleName%" (
+if exist "%driversDir%\%sysModuleName%" (
+    del /f "%driversDir%\%sysModuleName%" 2>nul
+    if exist "%driversDir%\%sysModuleName%" (
         echo [-] Could not delete .sys ^(in use?^)
     ) else (
         echo [+] Removed .sys
     )
 )
-if exist "C:\Windows\System32\drivers\%pdbModuleName%" (
-    del /f "C:\Windows\System32\drivers\%pdbModuleName%" 2>nul
+if exist "%driversDir%\%pdbModuleName%" (
+    del /f "%driversDir%\%pdbModuleName%" 2>nul
 )
 
 echo.

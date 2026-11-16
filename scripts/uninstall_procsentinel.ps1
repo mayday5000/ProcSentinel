@@ -8,8 +8,9 @@ $ErrorActionPreference = "Continue"
 $serviceName   = "ProcSentinelDrv"
 $sysModuleName = "procsentinel_driver.sys"
 $pdbModuleName = "procsentinel_driver.pdb"
-$targetSys     = "C:\Windows\System32\drivers\$sysModuleName"
-$targetPdb     = "C:\Windows\System32\drivers\$pdbModuleName"
+$driversDir    = Join-Path $env:SystemRoot "System32\drivers"
+$targetSys     = Join-Path $driversDir $sysModuleName
+$targetPdb     = Join-Path $driversDir $pdbModuleName
 $svcKey        = "HKLM:\SYSTEM\CurrentControlSet\Services\$serviceName"
 
 Write-Host ""

@@ -8,7 +8,7 @@
 # How it works:
 #   1. Reads the current folder name. If it ends in _vN, the clone is _v(N+1).
 #      If there is no suffix, the clone is CurrentName_v1.
-#   2. Copies the whole tree into the parent directory.
+#   2. Copies the tree into the parent directory (robocopy; skips .git and .vs).
 #   3. When the source already has a version tag, renames files that contain
 #      that tag and replaces the tag (and the altitude literal) inside
 #      .c .cpp .h .ps1 .bat .inf .md .vcxproj .sln.
@@ -37,7 +37,7 @@ $ErrorActionPreference = "Stop"
 
 $ScriptRoot   = $PSScriptRoot
 $ProjectRoot  = Split-Path $ScriptRoot -Parent          # e.g. ...\ProcSentinel
-$ParentDir    = Split-Path $ProjectRoot -Parent         # e.g. ...\ProcSentinel
+$ParentDir    = Split-Path $ProjectRoot -Parent         # e.g. ...\Drivers (folder that holds the project)
 $CurrentName  = Split-Path $ProjectRoot -Leaf           # e.g. ProcSentinel
 
 Write-Host ""
@@ -95,7 +95,13 @@ Write-Host ""
 
 # ---- Copy tree ----
 Write-Host "[*] Copying project tree..." -ForegroundColor Yellow
-Copy-Item -Path $ProjectRoot -Destination $NewRoot -Recurse -Force
+# robocopy instead of Copy-Item so .git (history) and .vs (IDE cache) are not cloned.
+& robocopy.exe "$ProjectRoot" "$NewRoot" /E /XD .git .vs /NFL /NDL /NJH /NJS /NP | Out-Null
+if ($LASTEXITCODE -ge 8) {
+    Write-Error "robocopy failed (exit $LASTEXITCODE) copying $ProjectRoot -> $NewRoot"
+    exit 1
+}
+$global:LASTEXITCODE = 0
 
 # ---- Rewrite version / altitude inside the new tree ----
 Write-Host "[*] Updating version strings and altitude in new tree..." -ForegroundColor Yellow

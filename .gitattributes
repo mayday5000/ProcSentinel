@@ -1,0 +1,10 @@
+# Normalize line endings in the repository (LF in the index).
+* text=auto
+
+# cmd.exe mis-parses labels / goto in LF-only batch files.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Visual Studio solution and driver INF: keep Windows line endings on checkout.
+*.sln text eol=crlf
+*.inf text eol=crlf
